@@ -24,18 +24,22 @@ mode_json() {
   commit_sha="$main_sha"
 
   if [ -n "$ISSUE" ]; then
-    gh issue view "$ISSUE" --repo "$TARGET_REPO" \
-      --json number,title,body,state,createdAt,author,authorAssociation,labels,comments \
-      | jq '{number, title, body: (.body // ""), state, createdAt,
-             author: {login: (.author.login // "ghost")}, authorAssociation,
-             labels: [.labels[].name],
-             comments: [.comments[] | {author: (.author.login // "ghost"), authorAssociation, body: (.body // ""), createdAt}]}' \
+    # REST, not `gh issue view --json`: the CLI does not expose authorAssociation for issues.
+    jq -n --slurpfile issue <(gh api "repos/$TARGET_REPO/issues/$ISSUE") \
+          --slurpfile comments <(gh api --paginate "repos/$TARGET_REPO/issues/$ISSUE/comments" | jq -s 'add // []') \
+      '$issue[0] | {number, title, body: (.body // ""), state: (.state | ascii_upcase), createdAt: .created_at,
+         author: {login: (.user.login // "ghost")}, authorAssociation: .author_association,
+         labels: [.labels[].name],
+         comments: [$comments[0][] | {author: (.user.login // "ghost"), authorAssociation: .author_association,
+                                       body: (.body // ""), createdAt: .created_at}]}' \
       >"$INPUTS_DIR/issue.json"
   fi
 
-  gh issue list --repo "$TARGET_REPO" --state open --limit 200 \
-    --json number,title,labels,state,authorAssociation,body \
-    | jq '[.[] | {number, title, labels: [.labels[].name], state, authorAssociation, body_excerpt: ((.body // "") | .[0:500])}]' \
+  # The issues endpoint also returns PRs; drop those. Cap at 200 like the old --limit.
+  gh api --paginate "repos/$TARGET_REPO/issues?state=open&per_page=100" | jq -s 'add // []' \
+    | jq '[.[] | select(.pull_request == null)
+           | {number, title, labels: [.labels[].name], state: (.state | ascii_upcase), authorAssociation: .author_association,
+              body_excerpt: ((.body // "") | .[0:500])}] | .[0:200]' \
     >"$INPUTS_DIR/issues.json"
 
   gh pr list --repo "$TARGET_REPO" --state open --limit 100 \
