@@ -8,7 +8,7 @@
     "owner": "nimeshjm",
     "repo": "software-factory",
     "ref": "main",
-    "app_slug": "factory-bot"
+    "app_slug": "software-factory-agent-bot"
   },
   "allowed_hosts": [
     "api.github.com",

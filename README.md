@@ -35,11 +35,11 @@ Keep Gemini on a dedicated Google Cloud project so AI Studio shows the factory's
 
 ## GitHub App
 
-1. Settings, Developer settings, GitHub Apps, New: name `factory.config.json#factory.app_slug` (default `factory-bot`), webhook off (the Worker receives repo webhooks separately).
+1. Settings, Developer settings, GitHub Apps, New: name `factory.config.json#factory.app_slug` (currently `software-factory-agent-bot`), webhook off (the Worker receives repo webhooks separately).
 2. Repository permissions: Contents RW, Issues RW, Pull requests RW, Actions RW, Checks R, Metadata R. No Workflows permission.
 3. Generate a private key, install the App on the target repo and this repo, store the App id and key as secrets above.
 4. Worker key conversion (WebCrypto needs PKCS#8):
-   `openssl pkcs8 -topk8 -nocrypt -in factory-bot.private-key.pem -out factory-bot.pkcs8.pem`
+   `openssl pkcs8 -topk8 -nocrypt -in software-factory-agent-bot.<date>.private-key.pem -out factory-bot.pkcs8.pem`
 5. Run `GH_TOKEN=<token> scripts/preflight-labels.sh` once to create the label set on the target.
 
 ## Running wrappers manually

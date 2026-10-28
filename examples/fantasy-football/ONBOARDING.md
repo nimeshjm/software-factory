@@ -40,8 +40,8 @@ gh api -X PATCH repos/$REPO \
   -f delete_branch_on_merge=true -F allow_squash_merge=true \
   -F allow_merge_commit=false -F allow_rebase_merge=false
 
-# Find the factory-bot App id (the App must be installed on the repo first).
-APP_ID=$(gh api repos/$REPO/installation --jq .app_id 2>/dev/null || gh api /apps/factory-bot --jq .id)
+# Find the software-factory-agent-bot App id (the App must be installed on the repo first).
+APP_ID=$(gh api repos/$REPO/installation --jq .app_id 2>/dev/null || gh api /apps/software-factory-agent-bot --jq .id)
 
 # Ruleset on the default branch.
 gh api -X POST repos/$REPO/rulesets --input - <<JSON
@@ -73,6 +73,6 @@ JSON
 
 Notes:
 - `required_approving_review_count` is 0 so the owner can merge their own and Dependabot PRs; lit factory PRs wait for a human `APPROVED` review enforced by the factory's `merge_policy`, not by GitHub. Raise to 1 if you want GitHub to enforce it too (the owner then cannot approve their own PRs; the bypass actor covers the factory only).
-- The `factory-bot` bypass lets the App squash-merge dark PRs without a review. The App needs no Workflows permission; PRs touching `.github/**` are never dark.
-- If `repos/$REPO/installation` is not accessible with your token, look up the App id in GitHub Settings > Developer settings > GitHub Apps > factory-bot and set `APP_ID` by hand.
+- The `software-factory-agent-bot` bypass lets the App squash-merge dark PRs without a review. The App needs no Workflows permission; PRs touching `.github/**` are never dark.
+- If `repos/$REPO/installation` is not accessible with your token, look up the App id in GitHub Settings > Developer settings > GitHub Apps > software-factory-agent-bot and set `APP_ID` by hand.
 - The Dependabot PRs currently open keep working: they get the `build-and-test` check from their branch pushes.
