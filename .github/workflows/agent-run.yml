@@ -1,0 +1,262 @@
+name: agent-run
+
+on:
+  workflow_call:
+    inputs:
+      agent: { required: true, type: string }
+      run_id: { required: false, type: string, default: "" }
+      issue: { required: false, type: string, default: "" }
+      pr: { required: false, type: string, default: "" }
+      phase: { required: false, type: string, default: "" }
+      dry_run: { required: false, type: string, default: "false" }
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON('{"triage":15,"builder":70,"bug-fixer":70,"reviewer":25,"verifier":20,"incident-responder":25}')[inputs.agent] }}
+    concurrency:
+      group: ${{ inputs.agent }}-${{ inputs.issue }}${{ inputs.pr }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout factory
+        uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install harness
+        run: uv sync --frozen
+
+      - name: Read factory config
+        id: cfg
+        env:
+          AGENT: ${{ inputs.agent }}
+        run: |
+          {
+            jq -r '"owner=\(.target.owner)", "repo=\(.target.repo)", "target_repo=\(.target.owner)/\(.target.repo)",
+                   "default_branch=\(.target.default_branch)", "factory_ref=\(.factory.ref)", "app_slug=\(.factory.app_slug)"' factory.config.json
+            jq -r --arg a "$AGENT" '[.agents[$a].tools[]?, (.agents[$a].phase_overrides // {} | .[] | .tools[]?)]
+                   | "needs_toolchain=\(any(. == "shell_in_workspace" or . == "run_checks"))"' factory.config.json
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve run id
+        id: ids
+        env:
+          INPUT_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          rid="$INPUT_RUN_ID"
+          if [ -z "$rid" ]; then rid="gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"; fi
+          echo "run_id=$rid" >> "$GITHUB_OUTPUT"
+
+      - name: Mint App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.FACTORY_APP_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          owner: ${{ steps.cfg.outputs.owner }}
+          repositories: ${{ steps.cfg.outputs.repo }}
+
+      - name: Ledger started
+        env:
+          FACTORY_URL: ${{ vars.FACTORY_URL }}
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+          RUN_ID: ${{ steps.ids.outputs.run_id }}
+          AGENT: ${{ inputs.agent }}
+          PHASE: ${{ inputs.phase }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: scripts/ledger-post.sh started
+
+      - name: Gather inputs (json)
+        id: gather
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          RUN_ID: ${{ steps.ids.outputs.run_id }}
+          AGENT: ${{ inputs.agent }}
+          PHASE: ${{ inputs.phase }}
+          ISSUE: ${{ inputs.issue }}
+          PR: ${{ inputs.pr }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          TRIGGER: ${{ github.event_name }}
+        run: scripts/gather-inputs.sh json
+
+      - name: Read target profile
+        id: profile
+        run: |
+          jq -r '"node=\(.toolchain.runtime.node // "")", "python=\(.toolchain.runtime.python // "")", "go=\(.toolchain.runtime.go // "")",
+                 "has_setup=\((.toolchain.setup | length) > 0)"' inputs/factory.json >> "$GITHUB_OUTPUT"
+
+      - name: Resolve phases
+        id: phases
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          RUN_ID: ${{ steps.ids.outputs.run_id }}
+          AGENT: ${{ inputs.agent }}
+          PHASE: ${{ inputs.phase }}
+          ISSUE: ${{ inputs.issue }}
+        run: scripts/gather-inputs.sh phases
+
+      - name: Decide checkout ref
+        id: ref
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          AGENT: ${{ inputs.agent }}
+          PR: ${{ inputs.pr }}
+          DEFAULT_BRANCH: ${{ steps.cfg.outputs.default_branch }}
+          TARGET_REPO: ${{ steps.cfg.outputs.target_repo }}
+          APP_SLUG: ${{ steps.cfg.outputs.app_slug }}
+        run: |
+          ref="$DEFAULT_BRANCH"
+          repo="$TARGET_REPO"
+          if [ "$AGENT" = "reviewer" ] && [ -n "$PR" ]; then
+            author="$(jq -r '.author' inputs/pr.json)"
+            cross="$(gh pr view "$PR" --repo "$repo" --json isCrossRepository --jq .isCrossRepository)"
+            case "$author" in
+              "app/$APP_SLUG"|app/dependabot) ;;
+              *)
+                echo "denied=true" >> "$GITHUB_OUTPUT"
+                echo "::error::Refusing to check out PR #$PR: author '$author' is not app/$APP_SLUG or app/dependabot"
+                exit 1 ;;
+            esac
+            if [ "$cross" = "true" ]; then
+              echo "denied=true" >> "$GITHUB_OUTPUT"
+              echo "::error::Refusing to check out PR #$PR: head is in a fork"
+              exit 1
+            fi
+            ref="$(jq -r '.headRefName' inputs/pr.json)"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.cfg.outputs.target_repo }}
+          token: ${{ steps.app.outputs.token }}
+          path: work
+          fetch-depth: 0
+          ref: ${{ steps.ref.outputs.ref }}
+          persist-credentials: false
+
+      - name: Gather inputs (context) and git identity
+        env:
+          AGENT: ${{ inputs.agent }}
+          APP_SLUG: ${{ steps.cfg.outputs.app_slug }}
+        run: |
+          scripts/gather-inputs.sh context
+          git -C work config user.name "$APP_SLUG"
+          git -C work config user.email "$APP_SLUG@users.noreply.github.com"
+
+      - uses: actions/setup-node@v4
+        if: ${{ inputs.agent == 'verifier' || (steps.cfg.outputs.needs_toolchain == 'true' && steps.profile.outputs.node != '') }}
+        with:
+          node-version: ${{ steps.profile.outputs.node || '24' }}
+
+      - uses: actions/setup-python@v5
+        if: ${{ steps.cfg.outputs.needs_toolchain == 'true' && steps.profile.outputs.python != '' }}
+        with:
+          python-version: ${{ steps.profile.outputs.python }}
+
+      - uses: actions/setup-go@v5
+        if: ${{ steps.cfg.outputs.needs_toolchain == 'true' && steps.profile.outputs.go != '' }}
+        with:
+          go-version: ${{ steps.profile.outputs.go }}
+
+      # Deliberately no env: block, so profile commands cannot see tokens or secrets.
+      - name: Target setup
+        if: ${{ steps.cfg.outputs.needs_toolchain == 'true' && steps.profile.outputs.has_setup == 'true' }}
+        working-directory: work
+        run: |
+          jq -r '.toolchain.setup[]' ../inputs/factory.json | while IFS= read -r cmd; do
+            echo "+ $cmd"
+            sh -c "$cmd"
+          done
+
+      - name: Install smoke dependencies
+        if: ${{ inputs.agent == 'verifier' }}
+        working-directory: smoke
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Gather inputs (deploy and smoke)
+        if: ${{ inputs.agent == 'verifier' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          AGENT: ${{ inputs.agent }}
+          TARGET_BASE_URL: ${{ vars.TARGET_BASE_URL }}
+          SMOKE_AUTH_TOKEN: ${{ secrets.SMOKE_AUTH_TOKEN }}
+        run: scripts/gather-inputs.sh verify
+
+      - name: Gather inputs (honeycomb)
+        if: ${{ inputs.agent == 'verifier' || inputs.agent == 'incident-responder' }}
+        env:
+          AGENT: ${{ inputs.agent }}
+          HONEYCOMB_QUERY_KEY: ${{ secrets.HONEYCOMB_QUERY_KEY }}
+        run: scripts/honeycomb-query.sh
+
+      - name: Run harness
+        id: harness
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WORKSPACE: ${{ github.workspace }}/work
+          FACTORY_RUN_ID: ${{ steps.ids.outputs.run_id }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://api.honeycomb.io
+          OTEL_EXPORTER_OTLP_HEADERS: x-honeycomb-team=${{ secrets.HONEYCOMB_API_KEY }}
+          OTEL_SERVICE_NAME: software-factory
+          OTEL_RESOURCE_ATTRIBUTES_BASE: build.commit_sha=${{ steps.gather.outputs.commit_sha }},work_tracker.issue_id=${{ inputs.issue }},factory.run_id=${{ steps.ids.outputs.run_id }},factory.agent=${{ inputs.agent }},deploy.environment=ci
+          HONEYCOMB_QUERY_KEY: ${{ inputs.agent == 'incident-responder' && secrets.HONEYCOMB_QUERY_KEY || '' }}
+          AGENT: ${{ inputs.agent }}
+          PHASES: ${{ steps.phases.outputs.phases }}
+        run: scripts/run-phases.sh
+
+      - name: Print proposal (dry run)
+        if: ${{ !cancelled() && inputs.dry_run == 'true' }}
+        run: |
+          for f in out/phases/*/proposal.json; do
+            if [ -f "$f" ]; then echo "== $f"; jq . "$f"; fi
+          done
+
+      - name: Mint fresh App token for apply
+        id: app2
+        if: ${{ !cancelled() && inputs.dry_run != 'true' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.FACTORY_APP_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          owner: ${{ steps.cfg.outputs.owner }}
+          repositories: ${{ steps.cfg.outputs.repo }}
+
+      - name: Apply proposal
+        if: ${{ !cancelled() && inputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.app2.outputs.token }}
+          RUN_ID: ${{ steps.ids.outputs.run_id }}
+          ISSUE: ${{ inputs.issue }}
+          PR: ${{ inputs.pr }}
+          AGENT: ${{ inputs.agent }}
+        run: scripts/apply-proposal.sh "$AGENT" --auto
+
+      - name: Upload artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-out-${{ inputs.agent }}-${{ steps.ids.outputs.run_id }}
+          path: out/**
+          retention-days: 1
+          if-no-files-found: ignore
+
+      - name: Ledger finished
+        if: ${{ always() }}
+        env:
+          FACTORY_URL: ${{ vars.FACTORY_URL }}
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+          RUN_ID: ${{ steps.ids.outputs.run_id }}
+          AGENT: ${{ inputs.agent }}
+          ISSUE: ${{ inputs.issue }}
+          PR: ${{ inputs.pr }}
+          JOB_STATUS: ${{ job.status }}
+          DENIED: ${{ steps.ref.outputs.denied }}
+        run: scripts/ledger-post.sh finished

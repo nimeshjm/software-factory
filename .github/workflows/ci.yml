@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - run: uv run pytest -q
+
+  profiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - name: validate target profiles
+        run: |
+          mkdir -p "$RUNNER_TEMP/profiles"
+          for f in templates/target/factory.yml examples/fantasy-football/factory.yml; do
+            yq -o=json '.' "$f" >"$RUNNER_TEMP/profiles/profile.json"
+            uv run --frozen python -m factory.schemas validate-profile --file "$RUNNER_TEMP/profiles/profile.json"
+          done
+
+  control-plane:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: npx tsc --noEmit
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh
+      - name: config sync
+        run: scripts/check-config-sync.sh
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+      - name: prompt lint
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            if [ ! -s "$f" ]; then echo "::error file=$f::prompt is empty"; fail=1; continue; fi
+            if ! grep -qi proposal "$f"; then echo "::error file=$f::prompt does not mention 'proposal'"; fail=1; fi
+          done < <(find agents -type f -name '*.md' | sort)
+          # every agent prompt carries the rendered target profile exactly once
+          while IFS= read -r f; do
+            n="$(grep -o '{{target_profile}}' "$f" | wc -l)"
+            if [ "$n" -ne 1 ]; then echo "::error file=$f::prompt must contain {{target_profile}} exactly once (found $n)"; fail=1; fi
+          done < <(find agents -mindepth 2 -type f -name '*.md' ! -name README.md ! -path 'agents/_shared/*' | sort)
+          exit "$fail"

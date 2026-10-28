@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "factory-control-plane",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "factory",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // TARGET_*, FACTORY_*, DAILY_MODEL_CALLS and MAX_OPEN_FACTORY_PRS mirror factory.config.json;
+  // DEPLOY_WORKFLOW_NAME and TARGET_DEFAULT_BRANCH mirror the target's factory.yml
+  // (deploy.workflow_name, deploy.branch). Checked by scripts/check-config-sync.sh.
+  // Non-secret config. Secrets (set with `wrangler secret put`): FACTORY_APP_ID,
+  // FACTORY_APP_PRIVATE_KEY, GITHUB_WEBHOOK_SECRET, FACTORY_TOKEN, HONEYCOMB_API_KEY, ALERT_WEBHOOK_URL
+  "vars": {
+    "TARGET_REPO": "nimeshjm/fantasy-football",
+    "FACTORY_REPO": "nimeshjm/software-factory",
+    "TARGET_DEFAULT_BRANCH": "main",
+    "DEPLOY_WORKFLOW_NAME": "Deploy",
+    "FACTORY_REF": "main",
+    "DAILY_MODEL_CALLS": "400",
+    "MAX_OPEN_FACTORY_PRS": "3",
+    "HONEYCOMB_DATASET": "factory"
+  }
+}

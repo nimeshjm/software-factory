@@ -1,0 +1,46 @@
+name: bug-fixer
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Ledger run id (blank for manual runs)
+        required: false
+        default: ""
+        type: string
+      issue:
+        description: Issue number
+        required: false
+        default: ""
+        type: string
+      pr:
+        description: Pull request number
+        required: false
+        default: ""
+        type: string
+      phase:
+        description: Phase (blank for the agent default)
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "true prints the proposal and skips apply"
+        required: false
+        default: "false"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  run:
+    uses: ./.github/workflows/agent-run.yml
+    with:
+      agent: bug-fixer
+      run_id: ${{ inputs.run_id }}
+      issue: ${{ inputs.issue }}
+      pr: ${{ inputs.pr }}
+      phase: ${{ inputs.phase }}
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit

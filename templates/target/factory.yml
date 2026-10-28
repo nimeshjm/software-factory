@@ -1,0 +1,89 @@
+# factory.yml: the target profile read by the software factory.
+# Read from the default branch only, on every run. Owned by humans (agents can never edit it).
+# Every section is optional; the values shown are the defaults unless marked "example".
+# Validate with: uv run python -m factory.schemas validate-profile --file factory.yml
+# Strings are capped at 400 chars and lists at 50 items.
+
+# Globs. A PR is autonomy:dark (agent-mergeable) only if EVERY changed path matches one of these.
+# factory.yml and .github/** are always lit regardless. Widen only after clean merges per path group.
+dark_paths: []            # example: ["docs/**", "**/*.md", "test/**"]
+
+# Dependency names (fnmatch) whose version bumps are always lit (human approval).
+lit_dependencies: []      # example: ["typescript", "@org/*"]
+
+# Size limits the planner, builder and reviewer enforce.
+limits:
+  max_diff_lines: 300
+  max_diff_files: 8
+
+toolchain:
+  # Runtime versions installed on the runner. Any subset; null = not installed.
+  runtime:
+    node: null              # example: "24"
+    python: null            # example: "3.13"
+    go: null                # example: "1.23"
+  # Commands run in the checkout after clone, before the agent starts. No secrets in the environment.
+  setup: []                 # example: ["npm ci"]
+  # Ordered checks executed by the agent tool `run_checks`; all must pass for checks_passed.
+  checks: []                # example: [{name: lint, run: "npm run lint"}, {name: test, run: "npm test"}]
+  # Command used by the [ci-fix] post-step for mechanical format failures; null = never attempt.
+  format: null              # example: "npm run format"
+  # Hint shown to agents for running one test; {file} is replaced with the test file.
+  single_test: null         # example: "pytest {file}"
+  # Globs. A PR touching only these files is treated as a dependency-only PR.
+  dependency_files: []      # example: ["package.json", "package-lock.json"]
+  # Directories added to the baseline skip list of the list/search tools.
+  ignore_dirs: []           # example: [".venv", "dist"]
+  # Extra env var prefixes passed to shell tools. The never-export list (GEMINI, GITHUB_, GH_, OTEL_,
+  # HONEYCOMB, FACTORY_, ACTIONS_, RUNNER_) always wins over these.
+  env_prefixes: []          # example: ["NODE_", "PIP_"]
+
+protected:
+  # Regexes added to the baseline shell deny-list (baseline: git push, gh, sudo, curl/wget to other hosts...).
+  commands: []              # example: ["\\bterraform\\s+apply\\b"]
+  # Env var names that must never appear in an agent command.
+  env_markers: []           # example: ["LIVE_MODE"]
+  # Globs the agent may never edit (baseline: .github/**, .git/**, factory.yml).
+  paths: []                 # example: ["infra/**", "migrations/**"]
+
+secrets:
+  # Regexes added to the baseline secret scan of everything an agent emits.
+  patterns: []              # example: ["MYAPP_API_KEY\\s*[=:]\\s*\\S+"]
+  # Variable names shown to agents as never-print.
+  names: []                 # example: ["MYAPP_API_KEY"]
+
+# Files copied to inputs/context/ and read by every agent, in this order.
+context_files: ["AGENTS.md", ".agents/*.md", "docs/product-spec.md"]
+
+risk:
+  high_paths: []            # globs; an issue or PR touching them is risk:high
+  high_keywords: []         # phrases in an issue that make it risk:high, e.g. ["payment", "migration"]
+  priority1_signals: []     # phrases that mean priority:1, e.g. ["data loss", "outage"]
+  never_do: []              # short rules shown to every agent, e.g. ["Never touch production data"]
+
+smoke:
+  # How the factory finds the deployed commit. null = no version endpoint; the deploy-identity check is
+  # skipped. The auth secret is always the factory repo secret SMOKE_AUTH_TOKEN.
+  version: null             # example: {path: "/version", sha_field: "sha", auth_header: "x-auth-token"}
+  paths: []                 # paths GET by the post-deploy smoke test, e.g. ["/", "/health"]
+  expect: { status: 200, content_type: null }   # content_type example: "text/html"
+
+# The workflow whose completion triggers verification.
+deploy:
+  workflow_name: "Deploy"
+  branch: null              # null = the target default branch
+
+# Honeycomb detection for the verifier (liveness, new errors) and the incident-responder.
+honeycomb:
+  enabled: false
+  dataset: null             # example: "my-service"
+  environment: null         # example: "production"
+  liveness:                 # "is the service alive?": at least min_events matching events in the window
+    filters: []             # example: [{column: "faas.trigger", op: "exists"}]
+    window_minutes: 120
+    min_events: 1
+  errors:                   # error signatures for the last window
+    filters: []             # example: [{column: "error", op: "=", value: true}]
+    window_minutes: 1440
+    group_by: []            # first entry is the incident signature field, e.g. ["exception.slug"]
+    fallback_group_by: []   # used when group_by yields nothing, e.g. ["error.type", "name"]

@@ -1,0 +1,8 @@
+.venv/
+node_modules/
+work/
+inputs/
+out/
+.wrangler/
+__pycache__/
+.DS_Store

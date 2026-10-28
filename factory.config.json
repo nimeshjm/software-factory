@@ -1,0 +1,282 @@
+{
+  "target": {
+    "owner": "nimeshjm",
+    "repo": "fantasy-football",
+    "default_branch": "main"
+  },
+  "factory": {
+    "owner": "nimeshjm",
+    "repo": "software-factory",
+    "ref": "main",
+    "app_slug": "factory-bot"
+  },
+  "allowed_hosts": [
+    "api.github.com",
+    "github.com",
+    "objects.githubusercontent.com",
+    "api.honeycomb.io"
+  ],
+  "quota": {
+    "daily_model_calls": 400,
+    "max_open_factory_prs": 3
+  },
+  "models": {
+    "cheap": {
+      "model_id": "gemini-2.5-flash-lite",
+      "params": {
+        "temperature": 0.2,
+        "max_output_tokens": 8192,
+        "thinking_config": {
+          "thinking_budget": 0
+        }
+      }
+    },
+    "strong": {
+      "model_id": "gemini-2.5-flash",
+      "params": {
+        "temperature": 0.2,
+        "max_output_tokens": 16384,
+        "thinking_config": {
+          "thinking_budget": 0
+        }
+      }
+    }
+  },
+  "context": {
+    "tool_result_max_chars": 20000,
+    "offload_threshold_tokens": 2000,
+    "summarize_utilization": 0.8,
+    "preserve_recent": 4
+  },
+  "agents": {
+    "triage": {
+      "model": "cheap",
+      "phases": [
+        "triage"
+      ],
+      "tools": [
+        "read_file",
+        "list_files",
+        "search_files"
+      ],
+      "limits": {
+        "turns": 20,
+        "total_tokens": 200000,
+        "output_tokens": 16000
+      },
+      "max_model_calls": 20,
+      "timeout_minutes": 10
+    },
+    "builder": {
+      "model": "strong",
+      "phases": [
+        "research",
+        "plan",
+        "implement"
+      ],
+      "tools": [
+        "read_file",
+        "list_files",
+        "search_files",
+        "edit_file",
+        "shell_in_workspace",
+        "run_checks",
+        "git_commit"
+      ],
+      "phase_overrides": {
+        "research": {
+          "tools": [
+            "read_file",
+            "list_files",
+            "search_files"
+          ],
+          "limits": {
+            "turns": 25,
+            "total_tokens": 300000,
+            "output_tokens": 16000
+          },
+          "max_model_calls": 25,
+          "timeout_minutes": 10
+        },
+        "plan": {
+          "tools": [
+            "read_file",
+            "list_files",
+            "search_files"
+          ],
+          "limits": {
+            "turns": 15,
+            "total_tokens": 200000,
+            "output_tokens": 16000
+          },
+          "max_model_calls": 15,
+          "timeout_minutes": 10
+        },
+        "implement": {
+          "limits": {
+            "turns": 60,
+            "total_tokens": 900000,
+            "output_tokens": 60000
+          },
+          "max_model_calls": 60,
+          "timeout_minutes": 40
+        }
+      }
+    },
+    "bug-fixer": {
+      "model": "strong",
+      "phases": [
+        "research",
+        "plan",
+        "implement"
+      ],
+      "tools": [
+        "read_file",
+        "list_files",
+        "search_files",
+        "edit_file",
+        "shell_in_workspace",
+        "run_checks",
+        "git_commit"
+      ],
+      "phase_overrides": {
+        "research": {
+          "tools": [
+            "read_file",
+            "list_files",
+            "search_files",
+            "shell_in_workspace"
+          ],
+          "limits": {
+            "turns": 25,
+            "total_tokens": 300000,
+            "output_tokens": 16000
+          },
+          "max_model_calls": 25,
+          "timeout_minutes": 10
+        },
+        "plan": {
+          "tools": [
+            "read_file",
+            "list_files",
+            "search_files"
+          ],
+          "limits": {
+            "turns": 15,
+            "total_tokens": 200000,
+            "output_tokens": 16000
+          },
+          "max_model_calls": 15,
+          "timeout_minutes": 10
+        },
+        "implement": {
+          "limits": {
+            "turns": 60,
+            "total_tokens": 900000,
+            "output_tokens": 60000
+          },
+          "max_model_calls": 60,
+          "timeout_minutes": 40
+        }
+      }
+    },
+    "reviewer": {
+      "model": "strong",
+      "phases": [
+        "review"
+      ],
+      "tools": [
+        "read_file",
+        "list_files",
+        "search_files",
+        "run_checks"
+      ],
+      "limits": {
+        "turns": 30,
+        "total_tokens": 400000,
+        "output_tokens": 20000
+      },
+      "max_model_calls": 30,
+      "timeout_minutes": 15
+    },
+    "verifier": {
+      "model": "cheap",
+      "phases": [
+        "verify"
+      ],
+      "tools": [
+        "read_file"
+      ],
+      "limits": {
+        "turns": 10,
+        "total_tokens": 100000,
+        "output_tokens": 8000
+      },
+      "max_model_calls": 10,
+      "timeout_minutes": 5
+    },
+    "incident-responder": {
+      "model": "cheap",
+      "phases": [
+        "respond"
+      ],
+      "tools": [
+        "read_file",
+        "honeycomb_query"
+      ],
+      "limits": {
+        "turns": 25,
+        "total_tokens": 300000,
+        "output_tokens": 16000
+      },
+      "max_model_calls": 25,
+      "timeout_minutes": 15
+    }
+  },
+  "honeycomb": {
+    "api_base": "https://api.honeycomb.io",
+    "mcp_url": "https://mcp.honeycomb.io/mcp"
+  },
+  "labels": {
+    "status": [
+      "status:backlog",
+      "status:plan-review",
+      "status:in-progress",
+      "status:in-review",
+      "status:done"
+    ],
+    "priority": [
+      "priority:1",
+      "priority:2",
+      "priority:3"
+    ],
+    "type": [
+      "feature",
+      "enhancement",
+      "chore",
+      "bug",
+      "performance"
+    ],
+    "risk": [
+      "risk:low",
+      "risk:high"
+    ],
+    "size": [
+      "size:S",
+      "size:M",
+      "size:L"
+    ],
+    "autonomy": [
+      "autonomy:dark",
+      "autonomy:lit"
+    ],
+    "other": [
+      "needs-human",
+      "ona-user",
+      "epic",
+      "plan:approved",
+      "ci-fix:attempted",
+      "factory:accepted"
+    ]
+  }
+}
