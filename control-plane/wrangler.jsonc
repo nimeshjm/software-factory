@@ -10,7 +10,7 @@
     {
       "binding": "DB",
       "database_name": "factory",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "94c75ade-c3a3-408e-b437-b90a96c34ea2",
       "migrations_dir": "migrations"
     }
   ],
