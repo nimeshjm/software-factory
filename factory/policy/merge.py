@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .autonomy import classify_autonomy
-from .globs import match_glob
 
 GREEN = {"success", "neutral", "skipped"}
 CRON_TRIGGERS = {"cron", "schedule"}
@@ -73,11 +72,8 @@ def merge_policy(pr: dict[str, Any], factory_cfg: dict[str, Any], plan_files: li
         blockers.append(f"too many files: {len(files)} > {max_files}")
 
     deps = _bumped_deps(pr) if is_dependabot else []
+    # Dependency-only Dependabot bumps are dark only when the profile sets dark_dependency_bumps (see classify_autonomy).
     autonomy = classify_autonomy(files, factory_cfg, deps)
-    dep_globs = ((factory_cfg.get("toolchain") or {}).get("dependency_files")) or []
-    if is_dependabot and dep_globs and paths and all(any(match_glob(p, g) for g in dep_globs) for p in paths):
-        # dependency-only bumps are not in dark_paths; they stay lit unless the config says otherwise
-        pass
     human_approved = any(
         r.get("state") == "APPROVED" and not str(r.get("author", "")).endswith("[bot]")
         and r.get("author") != pr.get("author")

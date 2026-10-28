@@ -50,10 +50,10 @@ Exit 0 only on success. Always writes `out/result.json`.
 See `factory.config.json#labels`. State machine: `status:backlog → status:plan-review (risk:high) → status:in-progress → status:in-review → status:done`.
 
 ## Light/dark
-`autonomy:dark` iff every changed path matches `factory.json.dark_paths` and no dependency bump touches `lit_dependencies`. Else `autonomy:lit`. Changes to `factory.yml` or `.github/**` are always `lit`. Computed by `factory.policy.classify_autonomy`.
+`autonomy:dark` iff every changed path matches `factory.json.dark_paths` and no dependency bump touches `lit_dependencies`. With `dark_dependency_bumps: true`, a dependency bump whose every path matches `toolchain.dependency_files` is also `dark` (still never when it touches `lit_dependencies`). Else `autonomy:lit`. Changes to `factory.yml` or `.github/**` are always `lit`. Computed by `factory.policy.classify_autonomy`.
 
 ## Merge policy (`factory.policy.merge_policy`)
-Merge iff: CI green, all review threads resolved, `Closes #N` for feat/fix, diff ≤ `limits.max_diff_lines` (300) and ≤ `limits.max_diff_files` (8), touched files ⊆ plan files for factory PRs, and (`autonomy:dark` or a human `APPROVED` review). Dependabot: ≤1 merge per run, cron-triggered only; the cron passes the oldest open Dependabot PR without `needs-human` as `pr` (a reviewer run without `pr` reviews nothing). A reviewer run whose target setup fails labels the PR `needs-human` and comments, without a model call.
+Merge iff: CI green, all review threads resolved, `Closes #N` for feat/fix, diff ≤ `limits.max_diff_lines` (300) and ≤ `limits.max_diff_files` (8), touched files ⊆ plan files for factory PRs, and (`autonomy:dark` or a human `APPROVED` review). Dependabot: ≤1 merge per run, cron-triggered only; merges without a human only when `dark_dependency_bumps` makes the bump dark; the cron passes the oldest open Dependabot PR without `needs-human` as `pr` (a reviewer run without `pr` reviews nothing). A reviewer run whose target setup fails labels the PR `needs-human` and comments, without a model call.
 
 ## Control plane HTTP (bearer `FACTORY_TOKEN` unless noted)
 - `POST /webhooks/github` (HMAC `GITHUB_WEBHOOK_SECRET`, no bearer)
@@ -91,6 +91,7 @@ Fetched from the target's default branch only, normalised and validated by `uv r
 ```yaml
 dark_paths: []                 # globs; PR is autonomy:dark only if every changed path matches
 lit_dependencies: []           # dependency names whose bumps are always lit (fnmatch)
+dark_dependency_bumps: false   # true: a Dependabot bump touching only toolchain.dependency_files is dark (merges on green CI)
 limits: { max_diff_lines: 300, max_diff_files: 8 }
 toolchain:
   runtime: { node: null, python: null, go: null }   # version strings, any subset

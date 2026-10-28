@@ -132,6 +132,29 @@ def test_merge_uses_profile_dependency_files(factory_cfg):
     assert not merge_policy(pr, cfg, None, True, "cron").merge  # not dark, no human review
 
 
+def test_dark_dependency_bumps(factory_cfg):
+    cfg = {**factory_cfg, "dark_dependency_bumps": True,
+           "toolchain": {"dependency_files": ["package.json", "package-lock.json"]}}
+    dep_files = [{"path": "package.json", "additions": 1, "deletions": 1},
+                 {"path": "package-lock.json", "additions": 9, "deletions": 9}]
+    assert classify_autonomy(dep_files, cfg, ["left-pad"]) == "dark"
+    assert classify_autonomy(dep_files, cfg, ["badlib"]) == "lit"  # lit_dependencies still wins
+    assert classify_autonomy(dep_files, cfg, ["@scope/x"]) == "lit"
+    assert classify_autonomy(dep_files, cfg, []) == "lit"  # not a bump
+    assert classify_autonomy(dep_files + [{"path": "src/a.ts"}], cfg, ["left-pad"]) == "lit"  # code outside deps
+    assert classify_autonomy(dep_files, {**cfg, "dark_dependency_bumps": False}, ["left-pad"]) == "lit"
+    assert classify_autonomy(dep_files, {**cfg, "toolchain": {}}, ["left-pad"]) == "lit"  # no dependency_files
+
+    pr = _pr(title="Bump left-pad from 1 to 2", headRefName="dependabot/npm_and_yarn/left-pad-2", body="",
+             author="dependabot[bot]", files=dep_files)
+    assert merge_policy(pr, cfg, None, True, "cron").merge  # green CI, no human review needed
+    red = {**pr, "checks": [{"name": "ci", "status": "COMPLETED", "conclusion": "FAILURE"}]}
+    assert "CI not green" in " ".join(merge_policy(red, cfg, None, True, "cron").reasons)
+    lit = {**pr, "title": "Bump badlib from 3 to 4"}
+    assert "human APPROVED" in " ".join(merge_policy(lit, cfg, None, True, "cron").reasons)
+    assert not merge_policy(pr, cfg, None, True, "pull_request").merge  # still cron only
+
+
 def test_branch_command_is_deterministic(tmp_path, capsys):
     from factory.policy.__main__ import main as policy_main
 

@@ -124,6 +124,7 @@ class HoneycombProfile(_P):
 class TargetProfile(_P):
     dark_paths: StrList = Field(default_factory=list)
     lit_dependencies: StrList = Field(default_factory=list)
+    dark_dependency_bumps: bool = False
     limits: Limits = Field(default_factory=Limits)
     toolchain: Toolchain = Field(default_factory=Toolchain)
     protected: Protected = Field(default_factory=Protected)

@@ -11,6 +11,10 @@ dark_paths: []            # example: ["docs/**", "**/*.md", "test/**"]
 # Dependency names (fnmatch) whose version bumps are always lit (human approval).
 lit_dependencies: []      # example: ["typescript", "@org/*"]
 
+# true: a Dependabot PR that touches only toolchain.dependency_files and no lit dependency is autonomy:dark,
+# so the reviewer merges it on green CI with no human approval.
+dark_dependency_bumps: false
+
 # Size limits the planner, builder and reviewer enforce.
 limits:
   max_diff_lines: 300

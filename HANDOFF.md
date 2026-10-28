@@ -76,7 +76,7 @@ Not exercised against live services: the real Gemini path (only the fake model r
 ## Known gaps and judgement calls
 
 - Issue `#35` in the target is epic-sized; triage is expected to slice it into child issues on its first run.
-- Dependabot: at most one merge per reviewer run, cron-triggered only; `wrangler` and `@cloudflare/*` bumps are always lit. The merge-policy trigger is inferred from the PR author, not from a real cron signal.
+- Dependabot: at most one merge per reviewer run, cron-triggered only. With the profile's `dark_dependency_bumps: true` (set for fantasy-football on 2026-10-28), bumps confined to `package.json` and `package-lock.json` merge on green CI; `wrangler` and `@cloudflare/*` bumps are still always lit via `lit_dependencies`. The merge-policy trigger is inferred from the PR author, not from a real cron signal.
 - Reviewer runs are debounced per PR for 5 minutes; a push during an in-flight review is skipped, so that review may cover the older commit.
 - Dependency-only PR detection (`toolchain.dependency_files`) is wired but does not change merge behaviour.
 - The control plane mirrors agent limits and identity in `wrangler.jsonc` and `src/config.ts`; `scripts/check-config-sync.sh` in CI catches drift. Its tick must stay under the free plan's 50 subrequests.
