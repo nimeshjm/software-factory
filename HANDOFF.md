@@ -39,7 +39,13 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 
 ## State of the work
 
-**Factory repo: built, verified, NOT committed.** The git repo has zero commits and 15 untracked top-level entries. Nothing has been pushed to GitHub; `nimeshjm/software-factory` does not exist yet. First action for whoever picks this up: review and make the initial commit, create the GitHub repo (public, for free Actions minutes), push.
+**Factory repo: committed, public at `nimeshjm/software-factory`, setup steps 1 to 7 done (2026-10-28 evening).** Secrets and variables are on the repo, the App `software-factory-agent-bot` (id 5514689) is installed on both repos, the target has the label set, squash-only merges and the `main` ruleset, and the control plane is deployed at `https://factory-control-plane.nimeshjm.workers.dev` with the target webhook registered. Local copies of every secret and known value live in `.env` (git-ignored); `FACTORY_URL` is set there and as a repo variable.
+
+Step 8 progress: triage is graduated (dry run, then live on issue 35: labels applied, child issues 100 to 103 created). The reviewer passed its dry run on Dependabot PR 96 (verdict approve, 5 model calls); a live run would post the review and label it lit without merging. Not yet run: verifier, builder, bug-fixer. Incident responder is deferred (see Honeycomb below).
+
+**The control plane is paused** (`POST /admin/pause`) because its first cron tick dispatched live triage and reviewer runs before any loop was graduated. It has no per-agent gate. Resume with `POST /admin/resume` once the owner is happy with live triage and reviewer; from then on it dispatches triage for unlabeled issues and the Dependabot reviewer hourly.
+
+Fixes made while graduating, all pushed: issue and PR inputs come from the REST API (`gh --json` has no `authorAssociation`); Google retired the 2.5 Gemini models for new keys, so both tiers use `gemini-3.5-flash(-lite)` with `thinking_level: minimal`; Honeycomb endpoints point at the EU region; the cron passes the oldest Dependabot PR number to the reviewer (a run without `pr` reviews nothing and still spends ~18 model calls). The control plane needs a `wrangler deploy` after the last of these.
 
 Verification at handoff:
 
@@ -57,12 +63,12 @@ Not exercised against live services: the real Gemini path (only the fake model r
 
 ## Setup still owed by the owner (in order)
 
-1. Commit and push this repo to `nimeshjm/software-factory`.
-2. Merge PR 99 in fantasy-football. After its first deploy, confirm `GET /version` (header `x-dashboard-token`) returns the commit SHA, not `unknown`; the `--var` pass-through in `cloudflare/wrangler-action` is unverified.
-3. Create GitHub App `software-factory-agent-bot` (the name `factory-bot` was taken; `factory.app_slug` is updated to match) (Contents RW, Issues RW, Pull requests RW, Actions RW, Checks R, Metadata R, no Workflows). Install on both repos. Convert the key with `openssl pkcs8 -topk8 -nocrypt` for the Worker.
-4. Secrets in this repo: `GEMINI_API_KEY` (dedicated Google Cloud project; Google AI Plus does not cover the API), `FACTORY_APP_ID`, `FACTORY_APP_PRIVATE_KEY`, `HONEYCOMB_API_KEY`, `HONEYCOMB_QUERY_KEY`, `SMOKE_AUTH_TOKEN` (the dashboard token), `FACTORY_TOKEN`. Variables: `FACTORY_URL`, `TARGET_BASE_URL`.
-5. Labels: run `scripts/preflight-labels.sh` against the target. Ruleset on `main` per `examples/fantasy-football/ONBOARDING.md`.
-6. Deploy the control plane (`control-plane/README.md`), set its secrets, register the webhook for `issues, pull_request, check_suite, workflow_run`.
+1. Done: pushed, public.
+2. Done (PR 99 merged, `GET /version` returns the live SHA). Original note: Merge PR 99 in fantasy-football. After its first deploy, confirm `GET /version` (header `x-dashboard-token`) returns the commit SHA, not `unknown`; the `--var` pass-through in `cloudflare/wrangler-action` is unverified.
+3. Done. Create GitHub App `software-factory-agent-bot` (the name `factory-bot` was taken; `factory.app_slug` is updated to match) (Contents RW, Issues RW, Pull requests RW, Actions RW, Checks R, Metadata R, no Workflows). Install on both repos. Convert the key with `openssl pkcs8 -topk8 -nocrypt` for the Worker.
+4. Done. Secrets in this repo: `GEMINI_API_KEY` (dedicated Google Cloud project; Google AI Plus does not cover the API), `FACTORY_APP_ID`, `FACTORY_APP_PRIVATE_KEY`, `HONEYCOMB_API_KEY`, `HONEYCOMB_QUERY_KEY`, `SMOKE_AUTH_TOKEN` (the dashboard token), `FACTORY_TOKEN`. Variables: `FACTORY_URL`, `TARGET_BASE_URL`.
+5. Done. Labels: run `scripts/preflight-labels.sh` against the target. Ruleset on `main` per `examples/fantasy-football/ONBOARDING.md`.
+6. Done. Deploy the control plane (`control-plane/README.md`), set its secrets, register the webhook for `issues, pull_request, check_suite, workflow_run`.
 7. Honeycomb: stays `enabled: false` in the target's `factory.yml`. The read path (`scripts/honeycomb-query.sh`, `factory/tools/honeycomb.py`) uses the Query Data API, which Honeycomb gates to Enterprise; on the free plan a configuration key cannot carry Run Queries, so liveness and error polling cannot work. The verifier falls back to the smoke checks and the incident responder emits an empty list by design. Ingest (factory telemetry via OTLP and control-plane events) works on the free plan and is wired to the EU region. To get the read path back, port it to the Honeycomb MCP server (`honeycomb.mcp_url`, available on all plans) and then revisit the `faas.trigger` liveness filter.
 8. Graduate loops in order, each first with `dry_run=true` via `gh workflow run <agent>.yml -f dry_run=true ...`: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder.
 
