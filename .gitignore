@@ -9,3 +9,5 @@ __pycache__/
 .env
 .env.*
 *.pem
+smoke/test-results/
+smoke/playwright-report.json
