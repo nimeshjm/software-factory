@@ -53,7 +53,7 @@ See `factory.config.json#labels`. State machine: `status:backlog → status:plan
 `autonomy:dark` iff every changed path matches `factory.json.dark_paths` and no dependency bump touches `lit_dependencies`. Else `autonomy:lit`. Changes to `factory.yml` or `.github/**` are always `lit`. Computed by `factory.policy.classify_autonomy`.
 
 ## Merge policy (`factory.policy.merge_policy`)
-Merge iff: CI green, all review threads resolved, `Closes #N` for feat/fix, diff ≤ `limits.max_diff_lines` (300) and ≤ `limits.max_diff_files` (8), touched files ⊆ plan files for factory PRs, and (`autonomy:dark` or a human `APPROVED` review). Dependabot: ≤1 merge per run, cron-triggered only; the cron passes the oldest open Dependabot PR as `pr` (a reviewer run without `pr` reviews nothing).
+Merge iff: CI green, all review threads resolved, `Closes #N` for feat/fix, diff ≤ `limits.max_diff_lines` (300) and ≤ `limits.max_diff_files` (8), touched files ⊆ plan files for factory PRs, and (`autonomy:dark` or a human `APPROVED` review). Dependabot: ≤1 merge per run, cron-triggered only; the cron passes the oldest open Dependabot PR without `needs-human` as `pr` (a reviewer run without `pr` reviews nothing). A reviewer run whose target setup fails labels the PR `needs-human` and comments, without a model call.
 
 ## Control plane HTTP (bearer `FACTORY_TOKEN` unless noted)
 - `POST /webhooks/github` (HMAC `GITHUB_WEBHOOK_SECRET`, no bearer)

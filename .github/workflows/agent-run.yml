@@ -149,6 +149,17 @@ jobs:
           git -C work config user.name "$APP_SLUG"
           git -C work config user.email "$APP_SLUG@users.noreply.github.com"
 
+      # The implement prompt tells the agent it is already on feat|fix/<N>-<slug>; this is where that happens.
+      - name: Create work branch
+        if: ${{ (inputs.agent == 'builder' || inputs.agent == 'bug-fixer') && inputs.issue != '' }}
+        env:
+          AGENT: ${{ inputs.agent }}
+        run: |
+          branch="$(uv run --frozen python -m factory.policy branch --agent "$AGENT" --issue inputs/issue.json)"
+          printf '%s' "$branch" >inputs/branch.txt
+          git -C work checkout -b "$branch"
+          echo "branch: $branch"
+
       - uses: actions/setup-node@v4
         if: ${{ inputs.agent == 'verifier' || (steps.cfg.outputs.needs_toolchain == 'true' && steps.profile.outputs.node != '') }}
         with:
@@ -166,6 +177,7 @@ jobs:
 
       # Deliberately no env: block, so profile commands cannot see tokens or secrets.
       - name: Target setup
+        id: setup
         if: ${{ steps.cfg.outputs.needs_toolchain == 'true' && steps.profile.outputs.has_setup == 'true' }}
         working-directory: work
         run: |
@@ -173,6 +185,19 @@ jobs:
             echo "+ $cmd"
             sh -c "$cmd"
           done
+
+      # A PR whose branch cannot even be set up is the owner's problem; the label stops the cron re-picking it.
+      - name: Hand a broken PR to a human
+        if: ${{ failure() && steps.setup.outcome == 'failure' && inputs.agent == 'reviewer' && inputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ inputs.pr }}
+          TARGET_REPO: ${{ steps.cfg.outputs.target_repo }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh pr edit "$PR" --repo "$TARGET_REPO" --add-label needs-human
+          gh pr comment "$PR" --repo "$TARGET_REPO" --body "<!-- factory:review -->
+          The factory could not set up this branch (the profile's \`toolchain.setup\` failed), so it was not reviewed. See $RUN_URL. Labelled \`needs-human\`."
 
       - name: Install smoke dependencies
         if: ${{ inputs.agent == 'verifier' }}

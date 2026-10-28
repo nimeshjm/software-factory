@@ -92,6 +92,7 @@ describe("planTick", () => {
   it("dependabot reviewer hourly", () => {
     const prs = [
       { number: 7, headRef: "dependabot/npm/y", body: "", author: "app/dependabot" },
+      { number: 0, headRef: "dependabot/npm/broken", body: "", author: "app/dependabot", labels: ["needs-human"] },
       { number: 1, headRef: "dependabot/npm/x", body: "", author: "app/dependabot" },
       { number: 3, headRef: "feat/3-x", body: "", author: "app/software-factory-agent-bot" },
     ];

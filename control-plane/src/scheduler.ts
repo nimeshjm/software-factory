@@ -36,7 +36,7 @@ export async function loadTickState(env: Env, now: Date): Promise<TickState> {
   if (paused) return base; // skip GitHub calls entirely while paused
   // 2 list calls (plus token caching) keeps the tick well under 50 subrequests.
   const [prs, issues] = await Promise.all([listOpenPRs(env, env.TARGET_REPO), listIssues(env, env.TARGET_REPO, { state: "open" })]);
-  base.openPRs = prs.map((p) => ({ number: p.number, headRef: p.headRef, body: p.body, author: p.author }));
+  base.openPRs = prs.map((p) => ({ number: p.number, headRef: p.headRef, body: p.body, author: p.author, labels: p.labels }));
   base.openIssues = issues.map((i) => ({ number: i.number, labels: i.labels, authorAssociation: i.authorAssociation, body: i.body }));
   base.unlabeledIssues = issues.filter((i) => i.labels.length === 0).map((i) => i.number);
   return base;

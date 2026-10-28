@@ -18,6 +18,7 @@ export interface PRInfo {
   headRef: string;
   body: string | null;
   author: string;
+  labels?: string[];
 }
 export interface IssueInfo {
   number: number;
@@ -158,7 +159,10 @@ export function planTick(state: TickState, now: Date): Decision[] {
   // reviewer: hourly for Dependabot PRs
   // The reviewer needs a concrete PR: without one it reviews nothing and still spends its model calls.
   // Oldest (lowest number) first; the subject stays "dependabot" so the cadence and lock are per loop, not per PR.
-  const dependabotPRs = state.openPRs.filter((p) => isDependabot(p.author)).map((p) => p.number);
+  // needs-human marks a PR the pipeline could not handle (for example a broken lockfile); leave it to the owner.
+  const dependabotPRs = state.openPRs
+    .filter((p) => isDependabot(p.author) && !(p.labels ?? []).includes("needs-human"))
+    .map((p) => p.number);
   if (dependabotPRs.length) {
     const last = recent
       .filter((r) => r.agent === "reviewer" && r.subject === "dependabot")

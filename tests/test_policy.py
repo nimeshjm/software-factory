@@ -130,3 +130,14 @@ def test_merge_uses_profile_dependency_files(factory_cfg):
     pr = _pr(title="Bump left-pad from 1 to 2", headRefName="dependabot/x", body="", author="dependabot[bot]",
              files=[{"path": "deps.lock", "additions": 1, "deletions": 1}])
     assert not merge_policy(pr, cfg, None, True, "cron").merge  # not dark, no human review
+
+
+def test_branch_command_is_deterministic(tmp_path, capsys):
+    from factory.policy.__main__ import main as policy_main
+
+    f = tmp_path / "issue.json"
+    f.write_text('{"number": 104, "title": "Document GET /version in the README dashboard route table"}')
+    assert policy_main(["branch", "--agent", "builder", "--issue", str(f)]) == 0
+    assert capsys.readouterr().out.strip() == "feat/104-document-get-version-in-the-readme"
+    assert policy_main(["branch", "--agent", "bug-fixer", "--issue", str(f)]) == 0
+    assert capsys.readouterr().out.strip().startswith("fix/104-")

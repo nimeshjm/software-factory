@@ -162,7 +162,15 @@ apply_implement() {
   fi
   if [[ "${branch#*/}" != "$ISSUE-"* ]]; then die "branch number must equal issue #$ISSUE"; fi
   cur="$(git -C "$WORK_DIR" rev-parse --abbrev-ref HEAD)"
-  [ "$cur" = "$branch" ] || die "work/ is on '$cur', proposal says '$branch'"
+  if [ "$cur" != "$branch" ]; then
+    # The pipeline creates the branch (inputs/branch.txt) before implement; the proposal's name is advisory.
+    if [ -s "$INPUTS_DIR/branch.txt" ] && [ "$(cat "$INPUTS_DIR/branch.txt")" = "$cur" ]; then
+      warn "proposal branch '$branch' differs from the pipeline branch '$cur'; using '$cur'"
+      branch="$cur"
+    else
+      die "work/ is on '$cur', proposal says '$branch'"
+    fi
+  fi
   ahead="$(git -C "$WORK_DIR" rev-list --count "origin/$DEFAULT_BRANCH..HEAD")"
   [ "$ahead" -gt 0 ] || die "no commits ahead of $DEFAULT_BRANCH"
   if [ -n "$(git -C "$WORK_DIR" status --porcelain)" ]; then warn "uncommitted changes in work/ are not pushed"; fi

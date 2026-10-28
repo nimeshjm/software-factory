@@ -3,6 +3,7 @@
   python -m factory.policy classify-autonomy --pr inputs/pr.json --factory inputs/factory.json
   python -m factory.policy merge-policy --pr inputs/pr.json --factory inputs/factory.json \
       [--plan-files out/plan_files.json] --trigger cron|webhook
+  python -m factory.policy branch --agent builder|bug-fixer --issue inputs/issue.json
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import json
 import sys
 from dataclasses import asdict
 
+from .author import slug
 from .autonomy import classify_autonomy
 from .merge import _bumped_deps, merge_policy
 
@@ -37,7 +39,16 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--factory", required=True)
     m.add_argument("--plan-files")
     m.add_argument("--trigger", default="webhook")
+    b = sub.add_parser("branch", help="deterministic feat|fix/<N>-<slug> branch for an issue")
+    b.add_argument("--agent", required=True, choices=["builder", "bug-fixer"])
+    b.add_argument("--issue", required=True)
     ns = ap.parse_args(argv)
+
+    if ns.cmd == "branch":
+        issue = _load(ns.issue)
+        prefix = "feat" if ns.agent == "builder" else "fix"
+        sys.stdout.write(f"{prefix}/{issue['number']}-{slug(str(issue.get('title') or ''))}\n")
+        return 0
 
     pr = _load(ns.pr)
     factory = _load(ns.factory)

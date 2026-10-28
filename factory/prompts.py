@@ -110,6 +110,10 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
     for k in ("run_id", "trigger", "target_repo", "issue_number", "pr_number", "commit_sha"):
         if run.get(k) is not None:
             out.append(f"{k}: {run[k]}")
+    branch_file = d / "branch.txt"
+    if branch_file.is_file() and branch_file.read_text(encoding="utf-8").strip():
+        out.append(f"branch: {branch_file.read_text(encoding='utf-8').strip()} (already checked out in the workspace; "
+                   "use exactly this value for `branch` in the proposal)")
     out.append(UNTRUSTED_NOTE)
 
     issue = _load(d, "issue.json")
