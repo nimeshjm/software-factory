@@ -8,6 +8,52 @@ An autonomous software factory for one target repository, named in `factory.conf
 | Development (direction) | `.agents/*`, `factory.yml`, approves `autonomy:lit` PRs | Builder / bug-fixer: implement against the plan |
 | Testing (coherence) | "Questions for the human" in reviews, smoke checks | Reviewer, verifier, incident-responder |
 
+## How it flows
+
+```mermaid
+flowchart LR
+  subgraph T["Target repo"]
+    I["Issues"]
+    DP["Dependabot PRs"]
+    FP["Factory PRs<br/>feat/N-slug, fix/N-slug"]
+    D["Deploy workflow"]
+    P["factory.yml profile<br/>(default branch only)"]
+  end
+
+  subgraph CP["Control plane: Cloudflare Worker + D1"]
+    W["POST /webhooks/github"]
+    C["cron every 15 min: pre-flight"]
+    L[("ledger, per-subject locks,<br/>daily model-call quota, pause")]
+  end
+
+  subgraph GA["GitHub Actions: this repo"]
+    AR["agent-run.yml<br/>gather inputs, mint App token,<br/>check out target"]
+    H["Strands harness + Gemini<br/>guards, workspace tools,<br/>emits proposal.json"]
+    AP["apply-proposal.sh<br/>the only code that mutates GitHub"]
+  end
+
+  HC[("Honeycomb")]
+
+  I -- "opened" --> W
+  FP -- "opened, synchronize,<br/>check_suite completed" --> W
+  D -- "workflow_run success" --> W
+  W --> L
+  C --> L
+  P -. "read at run start" .-> AR
+  L -- "workflow_dispatch<br/>(run_id, issue, pr, phase)" --> AR
+  AR --> H
+  H -- "proposal.json" --> AP
+  AR -- "started, finished" --> L
+  AP -- "labels, comments,<br/>child issues" --> I
+  AP -- "review, autonomy label,<br/>merge if policy allows" --> DP
+  AP -- "branch, PR, review,<br/>squash merge if dark" --> FP
+  FP -- "merged" --> D
+  H -. "OTLP traces" .-> HC
+  L -. "one event per decision" .-> HC
+```
+
+Loops the cron and webhooks drive: triage on any unlabeled issue; builder on `status:backlog` features and enhancements and bug-fixer on backlog bugs, both stopping after the plan on `risk:high` until a human adds `plan:approved`; reviewer on every factory PR event and hourly on the oldest open Dependabot PR; verifier after each successful target deploy; incident responder once a day. The agent process holds only the Gemini key. Everything that touches GitHub runs in `apply-proposal.sh` under a freshly minted App token, and a PR merges without a human only when it is confined to the profile's `dark_paths`, CI is green and every review thread is resolved.
+
 ## Layout
 
 ```
