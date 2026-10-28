@@ -22,6 +22,8 @@ npx wrangler secret put ALERT_WEBHOOK_URL      # optional, https only (Slack/Dis
 npx wrangler deploy
 ```
 
+After the first manual deploy, CI redeploys automatically: the `deploy-control-plane` job in `.github/workflows/ci.yml` runs on every push to `main` once the control-plane tests and lint jobs pass, applies D1 migrations with `--remote`, then runs `wrangler deploy`. It needs the repo secrets `CLOUDFLARE_API_TOKEN` (API token with Workers Scripts: Edit and D1: Edit on the account) and `CLOUDFLARE_ACCOUNT_ID`; without them the job logs a warning and skips. Secrets set with `wrangler secret put` are not touched by a deploy.
+
 The GitHub App must be installed on both `<owner>/<target>` (read issues/PRs) and `<owner>/<factory>` (Actions: write).
 
 Register the webhook on the target repo (or configure it on the App):
