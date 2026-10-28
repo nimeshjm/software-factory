@@ -13,7 +13,7 @@ def test_resolve_overrides():
     cfg = C.load_config()
     r = C.resolve_run_spec(cfg, "builder", "research")
     assert r.tools == ["read_file", "list_files", "search_files"] and r.max_model_calls == 25
-    assert r.model_id == "gemini-3.5-flash" and r.params["thinking_config"]["thinking_level"] == "minimal"
+    assert r.model_id == "gemini-3.5-flash-lite" and r.params["thinking_config"]["thinking_level"] == "low"
     imp = C.resolve_run_spec(cfg, "builder", "implement")
     assert "edit_file" in imp.tools and imp.limits["turns"] == 60 and imp.timeout_minutes == 40
     bf = C.resolve_run_spec(cfg, "bug-fixer", "research")

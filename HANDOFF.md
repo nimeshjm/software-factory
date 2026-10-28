@@ -83,6 +83,7 @@ Not exercised against live services: the real Gemini path (only the fake model r
 - Summarisation inside Strands' context manager makes model calls the quota guard does not see, so ledger call counts can under-report slightly.
 - The example profile's secret rule treats `FANTASY_(EMAIL|PASSWORD|SESSION_COOKIE)=value` as a leak; bare variable names are allowed.
 - Multi-target is out of scope; the config shape allows it later.
+- Gemini free tier: `gemini-3.5-flash` allows 20 requests per day (Google's 429 text, bucket shared with other 3.x flash models), so both tiers run on `gemini-3.5-flash-lite` (strong tier with `thinking_level: low`). The lite model has not throttled at 40+ calls in a day; the exact limit is on the AI Studio rate-limit page. The 400/day quota in `factory.config.json` is a ceiling, not a measured limit.
 - `HONEYCOMB_QUERY_KEY` is set as a repo secret but the key cannot run queries (free plan); it is unused while `honeycomb.enabled` is false.
 
 ## How to work on it
