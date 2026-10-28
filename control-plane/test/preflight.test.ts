@@ -90,8 +90,14 @@ describe("planTick", () => {
     expect(dispatched(d)[0]).toMatchObject({ agent: "triage", subject: "issue:3" });
   });
   it("dependabot reviewer hourly", () => {
-    const prs = [{ number: 1, headRef: "dependabot/npm/x", body: "", author: "app/dependabot" }];
-    expect(dispatched(planTick(base({ openPRs: prs }), NOW))[0]).toMatchObject({ agent: "reviewer", subject: "dependabot" });
+    const prs = [
+      { number: 7, headRef: "dependabot/npm/y", body: "", author: "app/dependabot" },
+      { number: 1, headRef: "dependabot/npm/x", body: "", author: "app/dependabot" },
+      { number: 3, headRef: "feat/3-x", body: "", author: "app/software-factory-agent-bot" },
+    ];
+    expect(dispatched(planTick(base({ openPRs: prs }), NOW))[0]).toMatchObject({
+      agent: "reviewer", subject: "dependabot", inputs: { pr: "1" },
+    });
     const recent = [{ agent: "reviewer", subject: "dependabot", dispatchedAt: "2026-10-21T09:30:00Z" }];
     expect(dispatched(planTick(base({ openPRs: prs, recentRuns: recent }), NOW))).toHaveLength(0);
     const old = [{ agent: "reviewer", subject: "dependabot", dispatchedAt: "2026-10-21T09:00:00Z" }];

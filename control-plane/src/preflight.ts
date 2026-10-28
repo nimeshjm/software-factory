@@ -156,12 +156,15 @@ export function planTick(state: TickState, now: Date): Decision[] {
   }
 
   // reviewer: hourly for Dependabot PRs
-  if (state.openPRs.some((p) => isDependabot(p.author))) {
+  // The reviewer needs a concrete PR: without one it reviews nothing and still spends its model calls.
+  // Oldest (lowest number) first; the subject stays "dependabot" so the cadence and lock are per loop, not per PR.
+  const dependabotPRs = state.openPRs.filter((p) => isDependabot(p.author)).map((p) => p.number);
+  if (dependabotPRs.length) {
     const last = recent
       .filter((r) => r.agent === "reviewer" && r.subject === "dependabot")
       .map((r) => Date.parse(r.dispatchedAt))
       .reduce((a, b) => Math.max(a, b), 0);
-    if (nowMs - last >= 50 * 60_000) dispatch("reviewer", "dependabot", null, null, "review");
+    if (nowMs - last >= 50 * 60_000) dispatch("reviewer", "dependabot", null, Math.min(...dependabotPRs), "review");
   }
 
   // triage sweep
