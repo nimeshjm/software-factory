@@ -79,6 +79,7 @@ Strands reports `tool_use` when the structured-output tool ends the loop; `facto
 ## Post-step rules the scripts must honour
 - Triage `new_issues[].body` may contain `Depends on {child:K}` (K = 1-based index into `new_issues`); create in order and substitute real numbers.
 - Issues created by verifier and incident-responder get the extra label `factory:accepted` so the control plane's author gate admits them to bug-fixer.
+- Triage-created `new_issues` inherit `factory:accepted` when the parent (or, with no parent, the triaged issue) is from a trusted author or already carries `factory:accepted`; otherwise they wait for a human.
 - Reviewer `ci_fix.attempted == true`: only if label `ci-fix:attempted` is absent, run `profile.toolchain.format` in `work/` (null: label `needs-human` instead), commit `[ci-fix] <commit_message>`, push, add the label.
 - Builder/bug-fixer phases run in one job sharing `out/`; the harness reads `research.md`/`plan.md` from `inputs/` or `out/`.
 - `honeycomb.liveness.filters` / `honeycomb.errors.filters` in the target profile are Honeycomb Query API filter objects passed through verbatim; when the profile's `honeycomb.enabled` is false the pre-step writes `{"enabled": false}`.

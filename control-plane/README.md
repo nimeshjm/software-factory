@@ -49,6 +49,48 @@ Vars in `wrangler.jsonc` (non-secret):
 
 Operate: `curl -H "Authorization: Bearer $FACTORY_TOKEN" -X POST <url>/admin/pause` (or `/admin/resume`); `curl <url>/status` (a browser gets an HTML table).
 
+## Status endpoint
+
+`GET /status` is the control plane's health page: one unauthenticated read that answers "is the factory running, what is it doing, and why did the last tick do nothing". It needs no token (it exposes only run ids, agent names, issue and PR numbers and quota counts), returns JSON by default, and renders the same data as an HTML table when the request's `Accept` header includes `text/html`, so opening `https://factory-control-plane.nimeshjm.workers.dev/status` in a browser works.
+
+```bash
+curl -s $FACTORY_URL/status | jq
+```
+
+```json
+{
+  "paused": false,
+  "today": { "model_calls": 156, "reserved": 0, "quota": 400 },
+  "in_flight": [
+    { "run_id": "builder-202610282230-issue-104", "agent": "builder", "subject": "issue:104",
+      "status": "started", "dispatched_at": "...", "started_at": "...", "workflow_run_url": "..." }
+  ],
+  "last_tick": {
+    "at": "2026-10-28T23:00:36.100Z",
+    "decisions": [
+      { "kind": "skip", "agent": "builder", "reason": "no_eligible_feature (#35:awaiting-risk-or-plan-approval, #100:author-not-trusted)" }
+    ]
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `paused` | the kill switch (`POST /admin/pause`); while true the cron tick dispatches nothing |
+| `today.model_calls` | model calls reported by runs finished since 00:00 UTC |
+| `today.reserved` | calls reserved by runs still in flight (each agent's `max_model_calls`) |
+| `today.quota` | `DAILY_MODEL_CALLS`; a dispatch is skipped with `quota` when used plus reserved plus the agent's cap would exceed it |
+| `in_flight` | runs in `dispatched` or `started` state, with the Actions run URL once the harness has reported `started` |
+| `last_tick` | when the cron last ran (every 15 minutes) and every decision it took; `null` until the first tick |
+
+Decision kinds in `last_tick.decisions`:
+
+- `dispatch`: an agent was started; `subject` is `issue:N` for triage, builder and bug-fixer, `dependabot` for the hourly review (the PR number travels in the inputs), or the date for the incident responder.
+- `mark_lost`: a run exceeded its timeout plus grace without reporting `finished`; its reservation is released and the ledger marks it `lost`.
+- `skip`: the agent was considered and not started. `reason` is one of `in_flight` (that agent already has a run), `no_spec`, `quota`, `backpressure` (open factory PRs at `MAX_OPEN_FACTORY_PRS`), `bugs_first` (a priority 1 or 2 bug is open, so the builder waits), or `no_eligible_feature (...)` / `no_eligible_bug (...)` listing every backlog candidate with why it was passed over: `has-open-pr`, `needs-human`, `author-not-trusted` (author is not a collaborator and the issue lacks `factory:accepted`), `blocked-by:#N` (an open `Depends on` issue), or `awaiting-risk-or-plan-approval` (not `risk:low` and no `plan:approved`). The list is capped at 10 entries with `+N more`.
+
+An agent absent from the decisions was not a candidate on that tick (nothing in its backlog, or it runs on a schedule such as the hourly Dependabot review and the daily incident responder).
+
 ## Local dev
 
 ```bash

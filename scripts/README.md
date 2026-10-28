@@ -34,7 +34,7 @@ Notes for the policy author:
 ## Behaviour worth knowing
 
 - Agent-proposed labels are filtered to `factory.config.json#labels` and can never include `plan:approved`, `factory:accepted`, `ci-fix:attempted` or `autonomy:*` (verifier/incident issues get `factory:accepted` from the script itself).
-- Triage from non-collaborators (no `factory:accepted`) gets `needs-human` only. Triage `new_issues` are created in order; `{child:K}` placeholders in bodies are replaced by the K-th created issue number.
+- Triage from non-collaborators (no `factory:accepted`) gets `needs-human` only. Triage `new_issues` are created in order; `{child:K}` placeholders in bodies are replaced by the K-th created issue number. Each new issue also gets `factory:accepted` when its parent (or, with no parent, the triaged issue) is from a trusted author or already has that label, so the App-authored child passes the control plane's author gate.
 - All text posted to GitHub has `@mentions` neutralised (zero-width space after `@`).
 - `implement` aborts unless the branch matches `^(feat|fix)/[0-9]+-[a-z0-9-]+$`, matches the agent and issue, is the checked-out branch, has commits, and the diff does not touch `.github/**` or `factory.yml`. PR is a draft when `checks_passed` is false. The PR number is written to `out/created-pr.txt` for the ledger.
 - `ci_fix.attempted`: only on factory branches and only when `ci-fix:attempted` is absent: runs `profile.toolchain.format` in `work/` (with no GitHub tokens in env; when the profile has none, labels `needs-human`), commits `[ci-fix] ...`, pushes, labels. Otherwise `needs-human`.

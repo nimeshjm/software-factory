@@ -99,6 +99,13 @@ function blockReason(i: IssueInfo, openNumbers: Set<number>): string | null {
   return null;
 }
 
+const MAX_BLOCKED_LISTED = 10;
+// "#35:reason, #100:reason, ... , +N more": every blocked candidate in backlog order, bounded for D1 and the status table.
+function formatBlocked(blocked: string[]): string {
+  const shown = blocked.slice(0, MAX_BLOCKED_LISTED).join(", ");
+  return blocked.length > MAX_BLOCKED_LISTED ? `${shown}, +${blocked.length - MAX_BLOCKED_LISTED} more` : shown;
+}
+
 export function planTick(state: TickState, now: Date): Decision[] {
   if (state.paused) return [];
   const decisions: Decision[] = [];
@@ -188,17 +195,17 @@ export function planTick(state: TickState, now: Date): Decision[] {
   const bugs = backlog(["bug"]);
   if (bugs.length) {
     let chosen: IssueInfo | null = null;
-    let why = "";
+    const blocked: string[] = [];
     for (const b of bugs) {
       const r = hasPR(b.number) ? "has-open-pr" : blockReason(b, openNumbers);
       if (r === null) {
         chosen = b;
         break;
       }
-      why ||= `#${b.number}:${r}`;
+      blocked.push(`#${b.number}:${r}`);
     }
     if (chosen) dispatch("bug-fixer", `issue:${chosen.number}`, chosen.number, null, "");
-    else decisions.push({ kind: "skip", agent: "bug-fixer", reason: `no_eligible_bug (${why})` });
+    else decisions.push({ kind: "skip", agent: "bug-fixer", reason: `no_eligible_bug (${formatBlocked(blocked)})` });
   }
 
   // builder
@@ -214,7 +221,7 @@ export function planTick(state: TickState, now: Date): Decision[] {
       decisions.push({ kind: "skip", agent: "builder", reason: "bugs_first" });
     } else {
       let chosen: IssueInfo | null = null;
-      let why = "";
+      const blocked: string[] = [];
       for (const f of features) {
         let r: string | null = hasPR(f.number) ? "has-open-pr" : blockReason(f, openNumbers);
         if (r === null && !f.labels.includes("risk:low") && !f.labels.includes("plan:approved")) r = "awaiting-risk-or-plan-approval";
@@ -222,10 +229,10 @@ export function planTick(state: TickState, now: Date): Decision[] {
           chosen = f;
           break;
         }
-        why ||= `#${f.number}:${r}`;
+        blocked.push(`#${f.number}:${r}`);
       }
       if (chosen) dispatch("builder", `issue:${chosen.number}`, chosen.number, null, "");
-      else decisions.push({ kind: "skip", agent: "builder", reason: `no_eligible_feature (${why})` });
+      else decisions.push({ kind: "skip", agent: "builder", reason: `no_eligible_feature (${formatBlocked(blocked)})` });
     }
   }
 

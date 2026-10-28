@@ -85,6 +85,37 @@ describe("planTick", () => {
     const approved = issue(1, ["status:backlog", "feature", "risk:high", "plan:approved"]);
     expect(dispatched(planTick(base({ openIssues: [approved] }), NOW))).toHaveLength(1);
   });
+  it("skip reason lists every blocked feature in order", () => {
+    const d = planTick(base({
+      openIssues: [
+        issue(35, ["status:backlog", "feature", "risk:high", "priority:1"]),
+        feat(100, [], { authorAssociation: "NONE" }),
+        feat(106, ["needs-human"]),
+        feat(107, [], { body: "Blocked by #106" }),
+      ],
+    }), NOW);
+    expect(d).toContainEqual({
+      kind: "skip", agent: "builder",
+      reason: "no_eligible_feature (#35:awaiting-risk-or-plan-approval, #100:author-not-trusted, #106:needs-human, #107:blocked-by:#106)",
+    });
+  });
+  it("skip reason lists every blocked bug", () => {
+    const d = planTick(base({
+      openIssues: [
+        issue(1, ["status:backlog", "bug"], { authorAssociation: "NONE" }),
+        issue(2, ["status:backlog", "bug", "needs-human"]),
+      ],
+    }), NOW);
+    expect(d).toContainEqual({ kind: "skip", agent: "bug-fixer", reason: "no_eligible_bug (#1:author-not-trusted, #2:needs-human)" });
+  });
+  it("skip reason caps at 10 entries with +N more", () => {
+    const issues = Array.from({ length: 13 }, (_, i) => feat(i + 1, [], { authorAssociation: "NONE" }));
+    const d = planTick(base({ openIssues: issues }), NOW);
+    const skip = d.find((x) => x.kind === "skip" && x.agent === "builder") as any;
+    expect(skip.reason).toBe(
+      `no_eligible_feature (${Array.from({ length: 10 }, (_, i) => `#${i + 1}:author-not-trusted`).join(", ")}, +3 more)`,
+    );
+  });
   it("triage sweep for unlabeled issues", () => {
     const d = planTick(base({ unlabeledIssues: [8, 3], openIssues: [issue(3, []), issue(8, [])] }), NOW);
     expect(dispatched(d)[0]).toMatchObject({ agent: "triage", subject: "issue:3" });

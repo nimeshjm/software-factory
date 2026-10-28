@@ -107,7 +107,7 @@ All wrappers with `dry_run=true`, then `dry_run=false`, then control-plane dispa
 
 ## Pause
 
-`curl -X POST -H "Authorization: Bearer $FACTORY_TOKEN" $FACTORY_URL/admin/pause` stops dispatch within one tick; `/admin/resume` restarts it. `GET /status` shows in-flight runs and quota.
+`curl -X POST -H "Authorization: Bearer $FACTORY_TOKEN" $FACTORY_URL/admin/pause` stops dispatch within one tick; `/admin/resume` restarts it. `GET /status` shows quota, in-flight runs and every decision of the last tick, including why each backlog issue was skipped; the fields and skip reasons are documented in `control-plane/README.md`.
 
 ## Honeycomb board `factory`
 

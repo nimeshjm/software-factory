@@ -104,7 +104,7 @@ apply_triage() {
     fi
   done
 
-  local nnew created=() title body parent lbls k out
+  local nnew created=() title body parent lbls k out src src_json
   nnew="$(jq '.new_issues | length' "$f")"
   if [ "$nnew" -gt 10 ]; then warn "triage: capping new issues at 10"; nnew=10; fi
   for ((i = 0; i < nnew; i++)); do
@@ -116,6 +116,13 @@ apply_triage() {
     if [ -n "$parent" ]; then body="$body"$'\n\n'"Part of #$parent"; fi
     printf '%s\n\n<!-- factory:run %s -->\n' "$body" "$RUN_ID" | sanitize >"$TMP/b.md"
     lbls="$(jq -c ".new_issues[$i].labels" "$f" | filter_labels | csv)"
+    # The App bot is a CONTRIBUTOR, so children need factory:accepted to pass the author gate; inherit it from a trusted parent (or the triaged issue).
+    src="${parent:-$ISSUE}"
+    src_json=""
+    if [ -n "$src" ]; then src_json="$(jq -c --argjson n "$src" '[.[] | select(.number == $n)] | first // empty' "$INPUTS_DIR/issues.json")"; fi
+    if [ -n "$src_json" ] && author_is_trusted "$(jq -r '.authorAssociation' <<<"$src_json")" "$(jq -c '.labels' <<<"$src_json")"; then
+      lbls="${lbls:+$lbls,}factory:accepted"
+    fi
     out="$(create_issue "$title" "$TMP/b.md" "$lbls")"
     created+=("${out:-0}")
     if [ -n "$parent" ] && [ -n "$out" ]; then edit_labels issue "$parent" epic ""; fi
