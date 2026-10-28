@@ -1,6 +1,6 @@
 import type { Env } from "./types";
 
-const API = "https://api.honeycomb.io";
+const API = "https://api.eu1.honeycomb.io";
 
 /** Fire-and-forget Honeycomb event. Never throws; no-op without a key. */
 export function sendEvent(env: Env, data: Record<string, unknown>, ctx?: ExecutionContext): Promise<void> {

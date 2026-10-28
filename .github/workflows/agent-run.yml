@@ -203,7 +203,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           WORKSPACE: ${{ github.workspace }}/work
           FACTORY_RUN_ID: ${{ steps.ids.outputs.run_id }}
-          OTEL_EXPORTER_OTLP_ENDPOINT: https://api.honeycomb.io
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://api.eu1.honeycomb.io
           OTEL_EXPORTER_OTLP_HEADERS: x-honeycomb-team=${{ secrets.HONEYCOMB_API_KEY }}
           OTEL_SERVICE_NAME: software-factory
           OTEL_RESOURCE_ATTRIBUTES_BASE: build.commit_sha=${{ steps.gather.outputs.commit_sha }},work_tracker.issue_id=${{ inputs.issue }},factory.run_id=${{ steps.ids.outputs.run_id }},factory.agent=${{ inputs.agent }},deploy.environment=ci

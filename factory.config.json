@@ -14,7 +14,7 @@
     "api.github.com",
     "github.com",
     "objects.githubusercontent.com",
-    "api.honeycomb.io"
+    "api.eu1.honeycomb.io"
   ],
   "quota": {
     "daily_model_calls": 400,
@@ -234,8 +234,8 @@
     }
   },
   "honeycomb": {
-    "api_base": "https://api.honeycomb.io",
-    "mcp_url": "https://mcp.honeycomb.io/mcp"
+    "api_base": "https://api.eu1.honeycomb.io",
+    "mcp_url": "https://mcp.eu1.honeycomb.io/mcp"
   },
   "labels": {
     "status": [
