@@ -13,13 +13,13 @@ def test_resolve_overrides():
     cfg = C.load_config()
     r = C.resolve_run_spec(cfg, "builder", "research")
     assert r.tools == ["read_file", "list_files", "search_files"] and r.max_model_calls == 25
-    assert r.model_id == "gemini-2.5-flash" and r.params["thinking_config"]["thinking_budget"] == 0
+    assert r.model_id == "gemini-3.5-flash" and r.params["thinking_config"]["thinking_level"] == "minimal"
     imp = C.resolve_run_spec(cfg, "builder", "implement")
     assert "edit_file" in imp.tools and imp.limits["turns"] == 60 and imp.timeout_minutes == 40
     bf = C.resolve_run_spec(cfg, "bug-fixer", "research")
     assert "shell_in_workspace" in bf.tools
     t = C.resolve_run_spec(cfg, "triage", "triage")
-    assert t.model_id == "gemini-2.5-flash-lite" and t.timeout_seconds == 600
+    assert t.model_id == "gemini-3.5-flash-lite" and t.timeout_seconds == 600
     with pytest.raises(C.ConfigError):
         C.resolve_run_spec(cfg, "triage", "plan")
     with pytest.raises(C.ConfigError):
