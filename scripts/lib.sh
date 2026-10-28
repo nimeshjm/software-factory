@@ -78,7 +78,9 @@ fetch_plan_comment() {
 fetch_pr_json() {
   local n=$1 tmp raw linked
   tmp="$(mktemp -d)"
-  raw="$(gh pr view "$n" --repo "$TARGET_REPO" --json number,title,body,author,authorAssociation,labels,headRefName,baseRefName,isDraft,mergeable,files,statusCheckRollup,reviews)"
+  # `gh pr view --json` does not expose authorAssociation; take it from the REST API.
+  raw="$(gh pr view "$n" --repo "$TARGET_REPO" --json number,title,body,author,labels,headRefName,baseRefName,isDraft,mergeable,files,statusCheckRollup,reviews)"
+  local assoc; assoc="$(gh api "repos/$TARGET_REPO/pulls/$n" --jq '.author_association // "NONE"')"
   { gh pr diff "$n" --repo "$TARGET_REPO" 2>/dev/null | head -c 200000 >"$tmp/diff"; } || true
   # shellcheck disable=SC2016
   gh api graphql -F owner="${TARGET_REPO%%/*}" -F name="${TARGET_REPO##*/}" -F number="$n" -f query='
@@ -90,7 +92,7 @@ fetch_pr_json() {
   : >"$tmp/plan"
   if [ -n "$linked" ]; then fetch_plan_comment "$linked" >"$tmp/plan" 2>/dev/null || true; fi
   jq "$JQ_NORM"'
-    {number, title, body: (.body // ""), author: (.author | normauthor), authorAssociation,
+    {number, title, body: (.body // ""), author: (.author | normauthor), authorAssociation: $assoc,
      labels: [.labels[].name], headRefName, baseRefName, isDraft, mergeable,
      files: [.files[] | {path, additions, deletions}],
      diff: $diff,
@@ -99,7 +101,7 @@ fetch_pr_json() {
      reviews: [.reviews[]? | {author: (.author | normauthor), state}],
      reviewThreads: $threads[0],
      plan_comment: (if $plan == "" then null else $plan end)}' \
-    --rawfile diff "$tmp/diff" --slurpfile threads "$tmp/threads" --rawfile plan "$tmp/plan" \
+    --arg assoc "$assoc" --rawfile diff "$tmp/diff" --slurpfile threads "$tmp/threads" --rawfile plan "$tmp/plan" \
     <<<"$raw"
   rm -rf "$tmp"
 }
