@@ -16,7 +16,8 @@ from .profile import get_profile
 
 MAX_BYTES = 200_000
 MAX_JSON_BYTES = 2_000_000
-MAX_CHARS = 20_000
+MAX_CHARS = 20_000  # whole tool result; matches factory.config.json context.tool_result_max_chars
+NOTE_ROOM = 100
 SHAPE_ITEMS = 50
 SHAPE_DEPTH = 8
 SHAPE_SAMPLE = 40
@@ -213,10 +214,13 @@ def _get(url: str) -> str:
                 text = html_to_text(text)
             elif "json" in ctype.lower() or text.lstrip()[:1] in ("{", "["):
                 text = _json_view(text, cut)
-            clips = [f"showing the first {MAX_CHARS} of {len(text)} chars"] if len(text) > MAX_CHARS else []
+            head = f"HTTP {status} {ctype}\n"
+            # the whole result, note included, stays within MAX_CHARS so the context guard never cuts its middle
+            budget = MAX_CHARS - len(head) - len(_wrap(url, "")) - NOTE_ROOM
+            clips = [f"showing the first {budget} of {len(text)} chars"] if len(text) > budget else []
             clips += [f"body cut at {cap} bytes"] if cut else []
             note = f"\n[clipped: {'; '.join(clips)}]" if clips else ""
-            return f"HTTP {status} {ctype}\n" + _wrap(url, text[:MAX_CHARS] + note)
+            return head + _wrap(url, text[:budget] + note)
     return f"error: too many redirects (more than {MAX_HOPS})"
 
 

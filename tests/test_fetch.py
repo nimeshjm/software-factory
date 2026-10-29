@@ -95,18 +95,18 @@ def test_redirect_loop_capped(server):
 
 def test_size_and_char_caps(server):
     out = fetch.fetch_url(server + "/big")
-    assert out.startswith("HTTP 200") and len(out) < fetch.MAX_CHARS + 300
-    assert out.split("\n")[2] == "a" * fetch.MAX_CHARS
+    assert out.startswith("HTTP 200") and len(out) <= fetch.MAX_CHARS
+    assert set(out.split("\n")[2]) == {"a"} and len(out.split("\n")[2]) > fetch.MAX_CHARS - 300
 
 
 def test_char_clip_is_marked(server):
     out = fetch.fetch_url(server + "/long")
-    assert f"[clipped: showing the first {fetch.MAX_CHARS} of 100000 chars]" in out
+    assert "[clipped: showing the first " in out and " of 100000 chars]" in out and len(out) <= fetch.MAX_CHARS
 
 
 def test_byte_cut_is_marked(server):
     out = fetch.fetch_url(server + "/big")
-    assert f"[clipped: showing the first {fetch.MAX_CHARS} of {fetch.MAX_BYTES} chars; body cut at {fetch.MAX_BYTES} bytes]" in out
+    assert f" of {fetch.MAX_BYTES} chars; body cut at {fetch.MAX_BYTES} bytes]" in out
 
 
 def test_json_shape_covers_whole_body(server):
