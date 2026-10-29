@@ -12,7 +12,7 @@ from factory.tools import TOOL_REGISTRY, build_tools, files, honeycomb, shell
 def test_resolve_overrides():
     cfg = C.load_config()
     r = C.resolve_run_spec(cfg, "builder", "research")
-    assert r.tools == ["read_file", "list_files", "search_files"] and r.max_model_calls == 25
+    assert r.tools == ["read_file", "list_files", "search_files", "fetch_url", "web_search"] and r.max_model_calls == 25
     assert r.model_id == "gemini-3.5-flash-lite" and r.params["thinking_config"]["thinking_level"] == "low"
     imp = C.resolve_run_spec(cfg, "builder", "implement")
     assert "edit_file" in imp.tools and imp.limits["turns"] == 60 and imp.timeout_minutes == 40
@@ -143,3 +143,21 @@ def test_skip_dirs_extended_by_profile(ws, set_prof):
     assert "src/f.txt" in out and "gen/f.txt" in out and "node_modules" not in out and "build/" not in out
     set_prof(toolchain={"ignore_dirs": ["gen"]})
     assert "gen/f.txt" not in files.list_files(".") and "gen/f.txt" not in files.search_files("needle")
+
+
+def test_web_tools_registered_for_builder_and_bug_fixer():
+    from factory.schemas.models import BuildProposal
+
+    cfg = C.load_config()["agents"]
+    assert "fetch_url" in TOOL_REGISTRY
+    assert "web_search" in TOOL_REGISTRY
+    for name in ("builder", "bug-fixer"):
+        for t in ("fetch_url", "web_search"):
+            assert t in cfg[name]["tools"] and t in cfg[name]["phase_overrides"]["research"]["tools"]
+            assert t not in cfg[name]["phase_overrides"]["plan"]["tools"]
+            assert t in C.resolve_run_spec(C.load_config(), name, "implement").tools
+    assert not any(t in (a.get("tools", []) + [x for o in a.get("phase_overrides", {}).values()
+                                                for x in o.get("tools", [])])
+                   for t in ("fetch_url", "web_search") for n, a in cfg.items() if n not in ("builder", "bug-fixer"))
+    assert "spike" in C.load_config()["labels"]["other"]
+    assert BuildProposal(branch="b", title="t", body="b", checks_passed=True).findings_md is None

@@ -233,6 +233,7 @@ jobs:
           OTEL_SERVICE_NAME: software-factory
           OTEL_RESOURCE_ATTRIBUTES_BASE: build.commit_sha=${{ steps.gather.outputs.commit_sha }},work_tracker.issue_id=${{ inputs.issue }},factory.run_id=${{ steps.ids.outputs.run_id }},factory.agent=${{ inputs.agent }},deploy.environment=ci
           HONEYCOMB_QUERY_KEY: ${{ inputs.agent == 'incident-responder' && secrets.HONEYCOMB_QUERY_KEY || '' }}
+          TAVILY_API_KEY: ${{ (inputs.agent == 'builder' || inputs.agent == 'bug-fixer') && secrets.TAVILY_API_KEY || '' }}
           AGENT: ${{ inputs.agent }}
           PHASES: ${{ steps.phases.outputs.phases }}
         run: scripts/run-phases.sh

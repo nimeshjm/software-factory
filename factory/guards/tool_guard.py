@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -18,6 +19,10 @@ from factory.tools.workspace import PathEscape, resolve_in_workspace, workspace_
 from .events import GuardLog
 
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
+FETCH_CAP = 20  # fetch_url calls per harness process (one phase)
+FETCH_PORT = 443
+SEARCH_CAP = 10  # web_search calls per harness process (one phase)
+SEARCH_QUERY_MAX = 400
 PATH_TOOLS = {"read_file", "list_files", "search_files", "edit_file"}
 CURL_VALUE_FLAGS = {"-H", "--header", "-d", "--data", "--data-raw", "--data-binary", "-X", "--request", "-o",
                     "--output", "-u", "--user", "-A", "--user-agent", "-e", "--referer", "-b", "--cookie",
@@ -39,8 +44,8 @@ BASELINE_PATH_RULES: tuple[tuple[str, str, frozenset[str], str], ...] = (
     ("protected_path", "factory.yml", frozenset({"edit_file"}), "factory.yml cannot be edited"),
 )
 # Env names starting with any of these never reach tool subprocesses, whatever the profile says.
-NEVER_EXPORT_PREFIXES: tuple[str, ...] = ("GEMINI", "GITHUB_", "GH_", "OTEL_", "HONEYCOMB", "FACTORY_", "ACTIONS_",
-                                          "RUNNER_")
+NEVER_EXPORT_PREFIXES: tuple[str, ...] = ("GEMINI", "GITHUB_", "GH_", "OTEL_", "HONEYCOMB", "TAVILY", "FACTORY_",
+                                          "ACTIONS_", "RUNNER_")
 
 
 @dataclass
@@ -67,6 +72,57 @@ def _hosts_for(allowed_hosts) -> frozenset[str]:
     if allowed_hosts is None:
         allowed_hosts = load_config().get("allowed_hosts", [])
     return frozenset(h.lower() for h in allowed_hosts) | LOCAL_HOSTS
+
+
+def _host_matches(host: str, patterns: list[str]) -> bool:
+    for p in patterns:
+        p = p.lower()
+        if p == "*":  # any public host; the private-address and https rules still apply
+            return True
+        if p.startswith("*."):
+            if host.endswith(p[1:]) and len(host) > len(p) - 1:  # subdomains only, never the bare suffix
+                return True
+        elif host == p:
+            return True
+    return False
+
+
+def url_allowed(url: str, allowed_hosts: list[str], *, allow_loopback: bool = False) -> tuple[str, str] | None:
+    """Static check of a fetch_url target; return (rule, detail) when it must be refused, else None.
+
+    No DNS here: hosts that resolve to private addresses are the tool's job (it resolves before connecting).
+    ``allow_loopback`` is for tests only: it lets loopback hosts use http and any port.
+    """
+    url = url or ""
+    if any(c.isspace() or ord(c) < 32 for c in url):
+        return "fetch_url_shape", "url must not contain whitespace or control characters"
+    try:
+        u = urlparse(url)
+        host = (u.hostname or "").lower()
+        port = u.port
+    except ValueError as e:
+        return "fetch_url_shape", f"unparsable url: {e}"
+    ip = None
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    loopback = allow_loopback and (host == "localhost" or (ip is not None and ip.is_loopback))
+    if u.scheme.lower() != "https" and not (loopback and u.scheme.lower() == "http"):
+        return "fetch_scheme", f"only https is allowed, got {u.scheme or '(none)'}"
+    if not host:
+        return "fetch_url_shape", "url has no host"
+    if u.username is not None or u.password is not None or "@" in u.netloc:
+        return "fetch_url_shape", "credentials in the url are not allowed"
+    if port is not None and port != FETCH_PORT and not loopback:
+        return "fetch_url_shape", f"port {port} is not allowed (only {FETCH_PORT})"
+    if not allowed_hosts:
+        return "fetch_disabled", "no hosts configured in web.allowed_hosts; web research is disabled"
+    if ip is not None and not loopback:
+        return "fetch_private_address", f"IP literal hosts are not allowed: {host}"
+    if not _host_matches(host, allowed_hosts):
+        return "fetch_host", f"host not in web.allowed_hosts: {host}"
+    return None
 
 
 def _strip_quotes(cmd: str) -> str:
@@ -209,6 +265,13 @@ def evaluate(name: str, tool_input: dict, workspace: Path | None = None, allowed
         return check_shell(str(tool_input.get("command", "")), workspace, allowed_hosts, rules=rules)
     if name in PATH_TOOLS:
         return check_path_tool(name, tool_input, workspace, rules=rules)
+    if name == "fetch_url":
+        hosts = list(profile.web.allowed_hosts) if profile is not None else []
+        return url_allowed(str(tool_input.get("url", "")), hosts)
+    if name == "web_search":
+        q = str(tool_input.get("query", "")).strip()
+        if not 1 <= len(q) <= SEARCH_QUERY_MAX:
+            return "search_query", f"query must be 1..{SEARCH_QUERY_MAX} characters"
     return None
 
 
@@ -218,6 +281,8 @@ class ToolGuard(HookProvider):
         self.profile = profile or TargetProfile()
         self.rules = Rules.compile(self.profile)
         self.allowed_hosts = _hosts_for(allowed_hosts)
+        self.fetches = 0
+        self.searches = 0
 
     def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ANN003
         registry.add_callback(BeforeToolCallEvent, self.before_tool)
@@ -225,7 +290,15 @@ class ToolGuard(HookProvider):
     def before_tool(self, event: BeforeToolCallEvent) -> None:
         name = event.tool_use.get("name", "")
         verdict = evaluate(name, event.tool_use.get("input") or {}, allowed_hosts=self.allowed_hosts,
-                           rules=self.rules)
+                           profile=self.profile, rules=self.rules)
+        if name == "fetch_url":
+            self.fetches += 1
+            if self.fetches > FETCH_CAP:
+                verdict = ("fetch_cap", f"at most {FETCH_CAP} fetch_url calls per phase")
+        if name == "web_search":
+            self.searches += 1
+            if self.searches > SEARCH_CAP:
+                verdict = ("search_cap", f"at most {SEARCH_CAP} web_search calls per phase")
         if verdict:
             rule, detail = verdict
             event.cancel_tool = f"[tool_guard] Blocked {rule}: {detail}"

@@ -150,3 +150,98 @@ def test_shell_tool_cannot_see_never_export(ws, monkeypatch, set_prof):
     set_prof(toolchain={"env_prefixes": ["GEMINI", "OTEL_"]})
     out = shell.shell_in_workspace("echo [$GEMINI_API_KEY][$OTEL_X]")
     assert "topsecret" not in out and "otelsecret" not in out and "[][]" in out
+
+
+# --- fetch_url -------------------------------------------------------------
+from factory.guards.tool_guard import url_allowed  # noqa: E402
+
+FH = ["example.com", "*.example.org"]
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/a?b=1", "https://example.com:443/x", "https://EXAMPLE.com/",
+    "https://api.example.org/x", "https://a.b.example.org/",
+])
+def test_url_allowed_ok(url):
+    assert url_allowed(url, FH) is None
+
+
+@pytest.mark.parametrize("url,rule", [
+    ("http://example.com/", "fetch_scheme"),
+    ("ftp://example.com/", "fetch_scheme"),
+    ("example.com/x", "fetch_scheme"),
+    ("https://example.com:8443/", "fetch_url_shape"),
+    ("https://user:pw@example.com/", "fetch_url_shape"),
+    ("https://user@example.com/", "fetch_url_shape"),
+    ("https://example.com/a b", "fetch_url_shape"),
+    ("https://example.org/", "fetch_host"),  # wildcard never matches the bare suffix
+    ("https://notexample.org/", "fetch_host"),
+    ("https://evil.com/", "fetch_host"),
+    ("https://example.com.evil.com/", "fetch_host"),
+    ("https://93.184.216.34/", "fetch_private_address"),
+    ("https://127.0.0.1/", "fetch_private_address"),
+    ("https://169.254.169.254/latest/meta-data", "fetch_private_address"),
+    ("https://10.0.0.5/", "fetch_private_address"),
+    ("https://[::1]/", "fetch_private_address"),
+])
+def test_url_denied(url, rule):
+    got = url_allowed(url, FH)
+    assert got and got[0] == rule, got
+
+
+def test_url_empty_list_is_disabled():
+    assert url_allowed("https://example.com/", [])[0] == "fetch_disabled"
+    assert url_allowed("https://169.254.169.254/", [])[0] == "fetch_disabled"
+
+
+def test_url_allow_loopback_is_narrow():
+    assert url_allowed("http://127.0.0.1:8000/", ["127.0.0.1"], allow_loopback=True) is None
+    assert url_allowed("http://127.0.0.1:8000/", ["127.0.0.1"])[0] == "fetch_scheme"
+    assert url_allowed("http://example.com:8000/", ["example.com"], allow_loopback=True)[0] == "fetch_scheme"
+    assert url_allowed("https://10.0.0.5/", ["10.0.0.5"], allow_loopback=True)[0] == "fetch_private_address"
+
+
+def test_fetch_guard_hook_and_cap(ws):
+    prof = TargetProfile.model_validate({"web": {"allowed_hosts": ["example.com"]}})
+    log = GuardLog()
+    g = ToolGuard(log, prof, HOSTS)
+    assert _hook(g, "fetch_url", url="https://evil.com/").startswith("[tool_guard] Blocked fetch_host:")
+    assert log.events[-1]["rule"] == "fetch_host"
+    g = ToolGuard(GuardLog(), prof, HOSTS)
+    for _ in range(20):
+        assert _hook(g, "fetch_url", url="https://example.com/") is False
+    assert _hook(g, "fetch_url", url="https://example.com/").startswith("[tool_guard] Blocked fetch_cap:")
+    # a fresh guard (new phase) starts at zero; no profile hosts means disabled
+    assert _hook(ToolGuard(GuardLog(), None, HOSTS), "fetch_url", url="https://example.com/").startswith(
+        "[tool_guard] Blocked fetch_disabled:")
+    # fetch_url does not inherit the shell host allowlist or its localhost entries
+    assert _hook(ToolGuard(GuardLog(), prof, HOSTS), "fetch_url", url="https://api.github.com/").startswith(
+        "[tool_guard] Blocked fetch_host:")
+
+
+def test_web_search_guard_query_and_cap(ws):
+    log = GuardLog()
+    g = ToolGuard(log, None, HOSTS)
+    for q in ("", "   ", "x" * 401):
+        assert _hook(g, "web_search", query=q).startswith("[tool_guard] Blocked search_query:")
+    assert log.events[-1]["rule"] == "search_query"
+    g = ToolGuard(GuardLog(), None, HOSTS)
+    for _ in range(10):
+        assert _hook(g, "web_search", query="  python httpx  ") is False
+    assert _hook(g, "web_search", query="python httpx").startswith("[tool_guard] Blocked search_cap:")
+    assert _hook(ToolGuard(GuardLog(), None, HOSTS), "web_search", query="x" * 400) is False
+
+
+def test_tavily_key_never_exported(ws, monkeypatch, set_prof):
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-secretsecret")
+    set_prof(toolchain={"env_prefixes": ["TAVILY"]})
+    assert "TAVILY_API_KEY" not in clean_env()
+    assert "tvly-secretsecret" not in shell.shell_in_workspace("echo [$TAVILY_API_KEY]")
+
+
+def test_url_allowed_any_host_keeps_baseline():
+    assert url_allowed("https://anything.example.net/x", ["*"]) is None
+    assert url_allowed("http://anything.example.net/", ["*"])[0] == "fetch_scheme"
+    assert url_allowed("https://anything.example.net:8443/", ["*"])[0] == "fetch_url_shape"
+    assert url_allowed("https://10.0.0.5/", ["*"])[0] == "fetch_private_address"
+    assert url_allowed("https://169.254.169.254/", ["*"])[0] == "fetch_private_address"

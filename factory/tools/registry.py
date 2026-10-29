@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .fetch import fetch_url
 from .files import edit_file, list_files, read_file, search_files
 from .honeycomb import honeycomb_query
+from .web_search import web_search
 from .shell import git_commit, run_checks, shell_in_workspace
 
 TOOL_REGISTRY: dict[str, Any] = {
@@ -17,6 +19,8 @@ TOOL_REGISTRY: dict[str, Any] = {
     "run_checks": run_checks,
     "git_commit": git_commit,
     "honeycomb_query": honeycomb_query,
+    "fetch_url": fetch_url,
+    "web_search": web_search,
 }
 
 

@@ -81,14 +81,18 @@
         "edit_file",
         "shell_in_workspace",
         "run_checks",
-        "git_commit"
+        "git_commit",
+        "fetch_url",
+        "web_search"
       ],
       "phase_overrides": {
         "research": {
           "tools": [
             "read_file",
             "list_files",
-            "search_files"
+            "search_files",
+            "fetch_url",
+            "web_search"
           ],
           "limits": {
             "turns": 25,
@@ -137,7 +141,9 @@
         "edit_file",
         "shell_in_workspace",
         "run_checks",
-        "git_commit"
+        "git_commit",
+        "fetch_url",
+        "web_search"
       ],
       "phase_overrides": {
         "research": {
@@ -145,7 +151,9 @@
             "read_file",
             "list_files",
             "search_files",
-            "shell_in_workspace"
+            "shell_in_workspace",
+            "fetch_url",
+            "web_search"
           ],
           "limits": {
             "turns": 25,
@@ -276,7 +284,8 @@
       "epic",
       "plan:approved",
       "ci-fix:attempted",
-      "factory:accepted"
+      "factory:accepted",
+      "spike"
     ]
   }
 }

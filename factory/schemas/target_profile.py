@@ -121,6 +121,28 @@ class HoneycombProfile(_P):
     errors: Errors = Field(default_factory=Errors)
 
 
+_HOST_RE = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$")
+
+
+def _hostnames(hosts: list[str]) -> list[str]:
+    if "*" in hosts and len(hosts) > 1:
+        raise ValueError("'*' (any public host) must be the only entry in web.allowed_hosts")
+    for h in hosts:
+        if h == "*":
+            continue
+        if not _HOST_RE.match(h):
+            raise ValueError(f"invalid host {h!r}: use a lowercase hostname or '*.suffix' (no scheme, port or path)")
+        if h.startswith("*.") and "." not in h[2:]:
+            raise ValueError(f"invalid host {h!r}: wildcard needs a registrable suffix like '*.example.com'")
+    return hosts
+
+
+class Web(_P):
+    allowed_hosts: StrList = Field(default_factory=list)
+
+    _check_hosts = field_validator("allowed_hosts")(_hostnames)
+
+
 class TargetProfile(_P):
     dark_paths: StrList = Field(default_factory=list)
     lit_dependencies: StrList = Field(default_factory=list)
@@ -134,6 +156,7 @@ class TargetProfile(_P):
     smoke: Smoke = Field(default_factory=Smoke)
     deploy: Deploy = Field(default_factory=Deploy)
     honeycomb: HoneycombProfile = Field(default_factory=HoneycombProfile)
+    web: Web = Field(default_factory=Web)
 
     @model_validator(mode="before")
     @classmethod

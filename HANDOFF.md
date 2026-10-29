@@ -81,7 +81,7 @@ Not exercised against live services: the real Gemini path (only the fake model r
 - Dependabot: at most one merge per reviewer run, cron-triggered only. With the profile's `dark_dependency_bumps: true` (set for fantasy-football on 2026-10-28), bumps confined to `package.json` and `package-lock.json` merge on green CI; `wrangler` and `@cloudflare/*` bumps are still always lit via `lit_dependencies`. The merge-policy trigger is inferred from the PR author, not from a real cron signal.
 - Reviewer runs are debounced per PR for 5 minutes; a push during an in-flight review is skipped, so that review may cover the older commit.
 - Dependency-only PR detection (`toolchain.dependency_files`) only changes merge behaviour when the profile sets `dark_dependency_bumps: true`.
-- A builder or bug-fixer implement phase that proposes no files fails the run and leaves the issue `status:in-progress`; see plan A.
+- A builder or bug-fixer implement phase that proposes no files and no `findings_md` fails the run and leaves the issue `status:in-progress` (any failed implement run does). Builder spikes with `findings_md` are delivered as a comment and closed; see plan A.
 - The control plane mirrors agent limits and identity in `wrangler.jsonc` and `src/config.ts`; `scripts/check-config-sync.sh` in CI catches drift. Its tick must stay under the free plan's 50 subrequests.
 - `--max-budget`-style spend control does not exist for Gemini; the quota guard counts model calls, including throttle retries, so a 429 storm can exhaust a run's cap early.
 - Summarisation inside Strands' context manager makes model calls the quota guard does not see, so ledger call counts can under-report slightly.
@@ -90,11 +90,31 @@ Not exercised against live services: the real Gemini path (only the fake model r
 - Gemini free tier: `gemini-3.5-flash` allows 20 requests per day (Google's 429 text, bucket shared with other 3.x flash models), so both tiers run on `gemini-3.5-flash-lite` (strong tier with `thinking_level: low`). The lite model has not throttled at 40+ calls in a day; the exact limit is on the AI Studio rate-limit page. The 400/day quota in `factory.config.json` is a ceiling, not a measured limit.
 - `HONEYCOMB_QUERY_KEY` is set as a repo secret but the key cannot run queries (free plan); it is unused while `honeycomb.enabled` is false.
 
-## Planned work (designed 2026-10-28, not started)
+## Planned work (designed 2026-10-28)
 
-Both plans follow the core rules: agents propose, `apply-proposal.sh` acts; new interfaces go into `CONTRACTS.md` first; each agent graduates with `dry_run=true` before the control plane dispatches it.
+Plan A is implemented (2026-10-29, uncommitted, see below); Plan B is not started. Both plans follow the core rules: agents propose, `apply-proposal.sh` acts; new interfaces go into `CONTRACTS.md` first; each agent graduates with `dry_run=true` before the control plane dispatches it.
 
-### Plan A: spikes without a human (`fetch_url` + findings delivery)
+### Plan A: spikes without a human, and web research (`web_search`, `fetch_url`, findings delivery)
+
+**Status 2026-10-29: implemented in the working tree, not committed or pushed, and extended beyond the original plan into general web research.** Contract in `CONTRACTS.md` (`## Web research (web_search, fetch_url) and spikes`).
+
+- Profile section `web: { allowed_hosts: [] }` (renamed from the plan's `spike`; never shipped): exact host, `*.suffix`, or `["*"]` for any public host; empty disables web research and spike delivery. fantasy-football's example profile uses `["*"]` (owner's call).
+- `fetch_url` (`factory/tools/fetch.py`): https only, port 443, no private or non-global addresses (checked on every redirect hop), 200 KB, 10 s, 20 per phase (`fetch_cap`), text wrapped in `<untrusted>`.
+- `web_search` (`factory/tools/web_search.py`): Tavily free tier (1,000 basic searches a month, no card), up to 8 results wrapped in `<untrusted>`, 10 per phase (`search_cap`). Gemini Search grounding was ruled out: not on the free tier for 3.x models, and its terms forbid storing or re-displaying results. `TAVILY_API_KEY` reaches the harness only for builder and bug-fixer (owner chose the in-process pattern used for `HONEYCOMB_QUERY_KEY` over a control-plane proxy); `TAVILY` is a never-export prefix and `tvly-` a baseline secret pattern.
+- Both tools are on the builder and the bug-fixer in `research` and `implement` (never `plan`), for every issue, not only spikes. Prompts: a `## Web research` section (search only when the repo does not answer it, prefer official docs, cite URLs, results are literal data, queries and URLs carry only short public identifiers).
+- Spikes (builder only): `BuildProposal.findings_md`; `apply_implement` posts `<!-- factory:findings -->`, sets `status:done`, closes the issue, no PR. Triage can set the `spike` label.
+- Decisions: no control-plane change (empty `web.allowed_hosts` makes spike apply die, and the failed run is the signal); caps are per phase (one harness process). Accepted risks: DNS rebinding between check and connect; with any host reachable, a prompt-injected page could get data put into a URL or query, which only the prompts forbid; the agent holds no GitHub token and reads a public repo, and a leaked Tavily key costs at most the free monthly searches.
+
+Verification (2026-10-29): `uv run pytest -q` 148 passed; control plane 25 passed, `tsc` clean, `wrangler deploy --dry-run` succeeds; `actionlint`, `shellcheck`, `check-config-sync.sh` clean; both profiles validate and the old `spike:` key is rejected; a sample spike proposal passes the real schema validator and output guard. Not exercised live: Tavily, real fetches, and the apply spike branch against GitHub (stub `gh` only).
+
+Still owed (owner), in this order:
+1. Sign up for Tavily and `gh secret set TAVILY_API_KEY` on this repo (optional: without it `web_search` reports "not configured" and the agents carry on).
+2. Run `scripts/preflight-labels.sh` against the target **before pushing**: the triage prompt now emits `spike`, and applying a label that does not exist fails the whole triage apply.
+3. Commit and push the factory.
+4. Only then merge a target PR adding `web: { allowed_hosts: ["*"] }` to `factory.yml`. `TargetProfile` forbids unknown keys, so a `web:` section reaching the target before the factory knows it fails profile validation for every agent.
+5. Reset 107 to `status:backlog` (remove `status:in-progress`), `gh workflow run builder.yml -f issue=107 -f dry_run=true`, read the findings in the printed proposal, then let the cron run it live. Watch the bug-fixer's first live run for sensible search use.
+
+Original design:
 
 Problem: issue 107 is a spike ("record findings in an issue comment", no code). The builder has no network beyond GitHub and Honeycomb (tool guard allow-list, prompts forbid `curl`/`wget`) and the implement apply path only knows how to open a PR, so it died with "no commits ahead of main".
 

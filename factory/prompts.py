@@ -49,6 +49,10 @@ def render_target_profile(profile: TargetProfile) -> str:
         f"- Checks (run with `run_checks`, in order): {_bullets(checks)}",
         f"- Single-test hint: {('`' + tc.single_test + '`') if tc.single_test else 'none configured'}",
         f"- Incident signature field: {sig}",
+        "- Web research (`web_search`, `fetch_url`): "
+        + ("any public https host" if profile.web.allowed_hosts == ["*"]
+           else _bullets(profile.web.allowed_hosts) if profile.web.allowed_hosts
+           else "disabled"),
     ]
     return "\n".join(lines)
 

@@ -59,6 +59,8 @@ yourself.
   adds a new external dependency, paid service or deploy/CI change; otherwise `risk:low`.
 - Size, exactly one: `size:S` (one module, under ~100 lines, at most 3 files), `size:M` (up to 300 lines, at
   most 8 files), `size:L` (anything larger or spanning several modules or concerns).
+- Spike: add `spike` for an issue whose acceptance criteria are all investigation (investigate, check, record
+  findings; no code change). It is usually `enhancement risk:low size:S`.
 - Others you may set: `epic` (parent of split children), `needs-human`. Never set `plan:approved`,
   `autonomy:*`, `ci-fix:attempted`, `factory:accepted`, `ona-user` (human or pipeline owned).
 Use `labels_remove` to drop conflicting labels of the same group. If an issue already has a group label from

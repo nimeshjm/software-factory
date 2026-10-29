@@ -162,3 +162,27 @@ def test_context_order_from_profile(tmp_path):
         (ctx / n).write_text(n)
     msg = build_task_message(tmp_path, "x", "y", profile=TargetProfile.model_validate({"context_files": ["c.md", "a.md"]}))
     assert msg.index('file="c.md"') < msg.index('file="a.md"') < msg.index('file="b.md"')
+
+
+def test_web_hosts_validation():
+    assert TargetProfile().web.allowed_hosts == []
+    ok = TargetProfile.model_validate({"web": {"allowed_hosts": ["example.com", "*.example.org", "a-b.example.com"]}})
+    assert len(ok.web.allowed_hosts) == 3
+    for bad in ("https://example.com", "example.com:443", "example.com/x", "Example.com", "*example.com", "*.com",
+                "user@example.com", "", "exa mple.com"):
+        with pytest.raises(ValidationError):
+            TargetProfile.model_validate({"web": {"allowed_hosts": [bad]}})
+
+
+def test_prompt_lists_fetch_hosts():
+    assert "Web research (`web_search`, `fetch_url`): disabled" in render_target_profile(TargetProfile())
+    p = TargetProfile.model_validate({"web": {"allowed_hosts": ["example.com", "*.example.org"]}})
+    assert "Web research (`web_search`, `fetch_url`): `example.com`, `*.example.org`" in render_target_profile(p)
+
+
+def test_web_any_host():
+    assert TargetProfile.model_validate({"web": {"allowed_hosts": ["*"]}}).web.allowed_hosts == ["*"]
+    with pytest.raises(ValidationError):
+        TargetProfile.model_validate({"web": {"allowed_hosts": ["*", "example.com"]}})
+    p = TargetProfile.model_validate({"web": {"allowed_hosts": ["*"]}})
+    assert "Web research (`web_search`, `fetch_url`): any public https host" in render_target_profile(p)

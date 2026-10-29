@@ -91,3 +91,9 @@ honeycomb:
     window_minutes: 1440
     group_by: []            # first entry is the incident signature field, e.g. ["exception.slug"]
     fallback_group_by: []   # used when group_by yields nothing, e.g. ["error.type", "name"]
+
+# Web research for the builder and bug-fixer: hosts fetch_url may read; web_search runs only when this is non-empty.
+# Exact "host", "*.suffix" (subdomains only), or ["*"] for any public host; [] disables web research and spikes.
+# Private addresses and non-https are always refused.
+web:
+  allowed_hosts: []

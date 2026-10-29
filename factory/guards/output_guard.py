@@ -16,6 +16,7 @@ BASELINE_SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
     "github_app_token": re.compile(r"ghs_[A-Za-z0-9]*"),
     "github_pat": re.compile(r"ghp_[A-Za-z0-9]*"),
     "github_fine_grained_pat": re.compile(r"github_pat_[A-Za-z0-9_]*"),
+    "tavily_api_key": re.compile(r"tvly-[A-Za-z0-9_-]{8,}"),
     "google_api_key": re.compile(r"AIza[0-9A-Za-z_\-]*"),
     "private_key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 }

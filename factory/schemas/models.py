@@ -60,6 +60,7 @@ class BuildProposal(_Base):
     files: list[str] = Field(default_factory=list)
     checks_passed: bool
     notes: str = ""
+    findings_md: str | None = None
 
 
 # --- reviewer --------------------------------------------------------------

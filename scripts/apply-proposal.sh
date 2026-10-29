@@ -14,6 +14,8 @@ RUN_ID="${RUN_ID:-local}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+FINDINGS_MARKER='<!-- factory:findings -->'
+
 uvpy() { uv run --frozen python "$@"; }
 
 proposal_path() {
@@ -160,6 +162,24 @@ apply_plan() {
 apply_implement() {
   local f; f="$(proposal_path implement)"; validate_and_guard implement "$f"
   [ -n "$ISSUE" ] || die "implement requires ISSUE"
+  # Spike: no files but findings -> deliver an issue comment and close; no branch, push or PR.
+  if jq -e '(.files | length) == 0 and ((.findings_md // "") | type == "string" and length > 0)' "$f" >/dev/null; then
+    [ "$AGENT" = builder ] || die "spike findings are builder-only (agent: $AGENT)"
+    jq -e '(.web.allowed_hosts // []) | length > 0' "$INPUTS_DIR/factory.json" >/dev/null \
+      || die "spike delivery disabled: profile web.allowed_hosts is empty"
+    { printf '%s\n' "$FINDINGS_MARKER"
+      jq -r '.findings_md' "$f"
+      printf '\n---\n_Factory run %s_\n' "$RUN_ID"
+    } | sanitize >"$TMP/findings.md"
+    # sanitize leaves the marker intact (no @), so the comment still starts with it
+    upsert_comment "$ISSUE" "$FINDINGS_MARKER" "$TMP/findings.md"
+    edit_labels issue "$ISSUE" "status:done" "status:in-progress,status:plan-review,status:backlog"
+    if [ "$(gh issue view "$ISSUE" --repo "$TARGET_REPO" --json state --jq .state)" != CLOSED ]; then
+      gh issue close "$ISSUE" --repo "$TARGET_REPO" --reason completed >/dev/null
+    fi
+    log "spike findings posted on #$ISSUE; issue closed (no PR)"
+    return 0
+  fi
   local branch title ok prefix cur ahead existing pr_url
   branch="$(jq -r '.branch' "$f")"
   if ! [[ "$branch" =~ ^(feat|fix)/[0-9]+-[a-z0-9-]+$ ]]; then die "branch '$branch' does not match feat|fix/<N>-<slug>"; fi
