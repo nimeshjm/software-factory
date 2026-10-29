@@ -10,7 +10,7 @@ jq -r '
     elif . == "autonomy:dark" then "24292f" elif startswith("autonomy:") then "5319e7"
     elif . == "needs-human" then "b60205" elif . == "plan:approved" then "0e8a16"
     elif . == "ci-fix:attempted" then "e99695" elif . == "factory:accepted" then "0e8a16"
-    elif . == "epic" then "3e4b9e" else "ededed" end;
+    elif . == "epic" then "3e4b9e" elif . == "spike" then "bfd4f2" else "ededed" end;
   def desc: {
     "status:backlog": "Ready for the factory to pick up", "status:plan-review": "Plan posted, waiting for plan:approved",
     "status:in-progress": "Factory is working on this", "status:in-review": "PR open, in review", "status:done": "Merged and done",
@@ -22,7 +22,8 @@ jq -r '
     "autonomy:dark": "Merge may be automatic (dark path, green CI)", "autonomy:lit": "Needs a human approval before merge",
     "needs-human": "Factory stopped, a human must act", "ona-user": "Reported by an end user", "epic": "Parent of child issues",
     "plan:approved": "Human approved the plan", "ci-fix:attempted": "One automatic CI fix already tried",
-    "factory:accepted": "Author trusted by the factory"
+    "factory:accepted": "Author trusted by the factory",
+    "spike": "Investigation only: findings are posted as a comment, no PR"
   }[.] // "";
   .labels | [.[][]] | .[] | [., color, desc] | @tsv' "$CONFIG" \
 | while IFS=$'\t' read -r name color desc; do

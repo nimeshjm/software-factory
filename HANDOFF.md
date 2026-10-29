@@ -77,6 +77,9 @@ Not exercised against live services: the real Gemini path (only the fake model r
 
 ## Known gaps and judgement calls
 
+- 2026-10-29: Gemini 503 `UNAVAILABLE` ("high demand") killed two reviewer runs on Dependabot PR 111: Strands only maps it to a retryable throttle when it arrives as a 4xx. `factory/gemini.py` now retries 503 with Strands' backoff (6 attempts, about a minute); retries count against the run's model-call cap.
+- Alerts (`ALERT_WEBHOOK_URL` on the Worker, Slack/Discord, optional): failed or timed-out runs (from the ledger, with the Actions run link), lost runs, tick and dispatch failures. Denied runs are not alerted. Whether the secret is set on the deployed Worker has not been checked.
+- Labels sync to the target on every push to `main` (`sync-labels` job in `ci.yml`, App token, `scripts/preflight-labels.sh`).
 - Issue `#35` in the target is epic-sized; triage is expected to slice it into child issues on its first run.
 - Dependabot: at most one merge per reviewer run, cron-triggered only. With the profile's `dark_dependency_bumps: true` (set for fantasy-football on 2026-10-28), bumps confined to `package.json` and `package-lock.json` merge on green CI; `wrangler` and `@cloudflare/*` bumps are still always lit via `lit_dependencies`. The merge-policy trigger is inferred from the PR author, not from a real cron signal.
 - Reviewer runs are debounced per PR for 5 minutes; a push during an in-flight review is skipped, so that review may cover the older commit.

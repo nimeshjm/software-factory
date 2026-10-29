@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildStatus } from "../src/ledger";
+import { buildStatus, failureAlert } from "../src/ledger";
 import { computeQuota } from "../src/quota";
 import type { RunRow } from "../src/types";
 
@@ -27,5 +27,17 @@ describe("quota/status math", () => {
     expect(s.in_flight.map((r) => r.run_id)).toEqual(["d", "e"]);
     expect(s.last_tick).toEqual({ at: "x", decisions: [1] });
     expect(buildStatus([], false, null, 400, now).last_tick).toBeNull();
+  });
+});
+
+describe("failureAlert", () => {
+  const row = { agent: "reviewer", subject: "pr:111", workflow_run_url: "https://github.com/o/r/actions/runs/1" };
+  it("alerts failed and timeout runs with agent, subject, reason and link", () => {
+    expect(failureAlert("r1", { status: "failed", stop_reason: "exception" }, row))
+      .toBe("factory: run r1 [reviewer pr:111] failed (exception) https://github.com/o/r/actions/runs/1");
+    expect(failureAlert("r2", { status: "timeout" }, null)).toBe("factory: run r2 timeout");
+  });
+  it("stays quiet for success, denied and lost", () => {
+    for (const status of ["success", "denied", "lost"]) expect(failureAlert("r", { status }, row)).toBeNull();
   });
 });

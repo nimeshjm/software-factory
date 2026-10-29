@@ -21,9 +21,16 @@ Applying this template makes one PR in the target repo. Replace `<owner>/<repo>`
 4. Fill `.agents/architecture.md`, `.agents/conventions.md`, `.agents/design.md` and `docs/product-spec.md`. All domain knowledge lives there; the factory prompts contain none.
 5. Version endpoint: add one that returns the deployed commit SHA (and expose it only behind an auth header if it is sensitive), then set `smoke.version` in `factory.yml`. If you have none, set `smoke.version: null`; the deploy-identity check is then skipped.
 6. Verify the checks locally, commit, push the branch and open the PR from `.github/pull_request_template.md`. Merge it into the default branch BEFORE running the factory: it reads `factory.yml` from there and fails a run when the profile is missing or invalid.
-7. In the software-factory repo, set the secret `SMOKE_AUTH_TOKEN` to the token the version endpoint expects (leave it unset if the endpoint is public or `smoke.version` is null).
-8. Create the labels with the factory's script, run from the software-factory repo: `scripts/preflight-labels.sh` (labels are created there, not by this template).
-9. Install the GitHub App `factory-bot` (the `factory.app_slug` in `factory.config.json`) on the target repo, then apply the repo settings below.
+   If you want web research (builder and bug-fixer `web_search`/`fetch_url`) and spikes delivered as issue comments, set `web.allowed_hosts` (`["*"]` = any public host; empty = off).
+
+Then, in the software-factory repo:
+
+7. Point the factory at the target: set `target` (owner, repo, default_branch) in `factory.config.json` and the mirrored `TARGET_REPO` and `TARGET_DEFAULT_BRANCH` (and `DEPLOY_WORKFLOW_NAME`, mirroring `deploy.workflow_name`) in `control-plane/wrangler.jsonc`. CI's `scripts/check-config-sync.sh` fails when the two drift.
+8. Secrets and variables on the software-factory repo: variable `TARGET_BASE_URL` (deployed target, no trailing slash); secret `SMOKE_AUTH_TOKEN` (the token the version endpoint expects; leave unset if it is public or `smoke.version` is null); optional secret `TAVILY_API_KEY` for `web_search`.
+9. Install the GitHub App (`factory.app_slug` in `factory.config.json`, currently `software-factory-agent-bot`) on the target repo, then apply the repo settings below.
+10. Push the factory change to `main`. CI then checks config sync, redeploys the control plane with the new target vars, and creates or updates the labels on the target (`sync-labels` job running `scripts/preflight-labels.sh`; you can also run that script by hand).
+11. Register the target webhook for `issues`, `pull_request`, `check_suite` and `workflow_run` on the control plane's `/webhooks/github` URL (command in `control-plane/README.md`).
+12. Graduate each agent before the cron relies on it: `gh workflow run <agent>.yml -f dry_run=true ...` (triage, reviewer on a Dependabot PR, verifier, builder on a `risk:low size:S` issue, bug-fixer), then live once. `POST /admin/pause` on the control plane stops all dispatching while you do this.
 
 ## Repo settings (`gh api`)
 
@@ -38,7 +45,7 @@ gh api -X PATCH repos/$REPO \
   -F allow_merge_commit=false -F allow_rebase_merge=false
 
 # Find the App id (the App must be installed on the repo first).
-APP_ID=$(gh api repos/$REPO/installation --jq .app_id 2>/dev/null || gh api /apps/factory-bot --jq .id)
+APP_ID=$(gh api repos/$REPO/installation --jq .app_id 2>/dev/null || gh api /apps/software-factory-agent-bot --jq .id)
 
 # Ruleset on the default branch.
 gh api -X POST repos/$REPO/rulesets --input - <<JSON

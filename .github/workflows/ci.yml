@@ -70,6 +70,35 @@ jobs:
           done < <(find agents -mindepth 2 -type f -name '*.md' ! -name README.md ! -path 'agents/_shared/*' | sort)
           exit "$fail"
 
+  # Creates or updates every label in factory.config.json on the target repo on each push to main, so a
+  # label a prompt starts emitting exists before the cron can apply it. Idempotent (gh label create --force).
+  sync-labels:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [python, lint]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sync-labels
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Target from config
+        id: cfg
+        run: |
+          echo "owner=$(jq -r .target.owner factory.config.json)" >>"$GITHUB_OUTPUT"
+          echo "repo=$(jq -r .target.repo factory.config.json)" >>"$GITHUB_OUTPUT"
+      - name: Mint App token for the target
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.FACTORY_APP_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          owner: ${{ steps.cfg.outputs.owner }}
+          repositories: ${{ steps.cfg.outputs.repo }}
+      - name: Create or update labels
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: scripts/preflight-labels.sh
+
   # Deploys the control-plane Worker on every push to main once its tests and lint pass.
   # Needs repo secrets CLOUDFLARE_API_TOKEN (Workers Scripts: Edit, D1: Edit) and CLOUDFLARE_ACCOUNT_ID;
   # until they exist the job logs a warning and does nothing.

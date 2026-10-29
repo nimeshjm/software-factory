@@ -29,12 +29,12 @@ def _build_model(spec, fake: bool):
         script_path = os.environ.get("FACTORY_FAKE_SCRIPT")
         script = json.loads(Path(script_path).read_text()) if script_path else None
         return FakeModel(script=script)
-    from strands.models.gemini import GeminiModel
+    from .gemini import FactoryGeminiModel
 
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set")
-    return GeminiModel(client_args={"api_key": key}, model_id=spec.model_id, params=spec.params)
+    return FactoryGeminiModel(client_args={"api_key": key}, model_id=spec.model_id, params=spec.params)
 
 
 def _usage(res) -> dict[str, int]:

@@ -17,7 +17,7 @@ npx wrangler secret put FACTORY_APP_PRIVATE_KEY < app-pkcs8.pem
 npx wrangler secret put GITHUB_WEBHOOK_SECRET
 npx wrangler secret put FACTORY_TOKEN          # bearer for /runs/* and /admin/*
 npx wrangler secret put HONEYCOMB_API_KEY      # optional (ingest key)
-npx wrangler secret put ALERT_WEBHOOK_URL      # optional, https only (Slack/Discord)
+npx wrangler secret put ALERT_WEBHOOK_URL      # optional, https only (Slack/Discord): failed or timed-out runs, lost runs, tick and dispatch failures
 
 npx wrangler deploy
 ```

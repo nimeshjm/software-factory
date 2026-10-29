@@ -1,12 +1,28 @@
 import { dailyQuota } from "./config";
 import { computeQuota } from "./quota";
 import { isPaused } from "./quota";
+import { sendAlert } from "./alert";
 import { sendEvent } from "./honeycomb";
 import type { Env, RunRow } from "./types";
 import { IN_FLIGHT_STATUSES } from "./types";
 import { json, startOfUtcDay, toInt } from "./util";
 
 const FINAL = ["success", "failed", "timeout", "denied", "lost"];
+// Statuses worth a human's attention. "denied" (author gate) is expected; "lost" is alerted by the tick.
+const ALERT_STATUSES = new Set(["failed", "timeout"]);
+
+/** Pure: the alert text for a finished run, or null when the outcome needs no alert. */
+export function failureAlert(
+  id: string,
+  b: { status: string; stop_reason?: string | null },
+  row: { agent?: string | null; subject?: string | null; workflow_run_url?: string | null } | null,
+): string | null {
+  if (!ALERT_STATUSES.has(b.status)) return null;
+  const who = [row?.agent, row?.subject].filter(Boolean).join(" ");
+  const reason = b.stop_reason ? ` (${b.stop_reason})` : "";
+  const link = row?.workflow_run_url ? ` ${row.workflow_run_url}` : "";
+  return `factory: run ${id}${who ? ` [${who}]` : ""} ${b.status}${reason}${link}`;
+}
 
 async function ensureRun(env: Env, id: string, agent: string, phase: string | null, now: string): Promise<void> {
   // Manually dispatched runs report to the ledger without a prior row.
@@ -44,6 +60,13 @@ export async function handleFinished(req: Request, env: Env, ctx: ExecutionConte
     .run();
   await env.DB.prepare("DELETE FROM locks WHERE run_id = ?").bind(id).run();
   void sendEvent(env, { name: "run.finished", run_id: id, status: b.status, stop_reason: b.stop_reason, model_calls: calls, usage: JSON.stringify(b.usage ?? null) }, ctx);
+  if (ALERT_STATUSES.has(b.status)) {
+    const row = await env.DB.prepare("SELECT agent, subject, workflow_run_url FROM runs WHERE id = ?")
+      .bind(id)
+      .first<{ agent: string; subject: string; workflow_run_url: string | null }>();
+    const text = failureAlert(id, { status: b.status, stop_reason: b.stop_reason }, row);
+    if (text) void sendAlert(env, text, ctx);
+  }
   return json({ ok: true });
 }
 
