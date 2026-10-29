@@ -1,6 +1,6 @@
 # Handoff: software factory
 
-Written 2026-10-28, updated 2026-10-29 21:30 UTC (JSON fetch shape, spike model split, issue 107 clean dry run, issue 115). Everything below is the state at that time.
+Written 2026-10-28, updated 2026-10-29 21:35 UTC (JSON fetch shape, daily-quota model fallback, deploy gate, issue 107 released to the cron, issue 115 triaged). Everything below is the state at that time.
 
 ## What this is
 
@@ -64,7 +64,7 @@ Later on 2026-10-28 (23:00 to 23:40 UTC): triage ran live on epic 106 (children 
 - **Spike model split.** flash-lite still ignored fields the tool showed it (run 40916924033). Spike `implement` now runs `models.spike` (then `gemini-3.5-flash`, now `gemini-3.8-flash` with fallbacks, see below; `thinking_level: high`); spike `research` runs `models.spike_research` = flash-lite. Honeycomb confirmed the split on run 40951538447.
 - **Daily-quota model fallback (2026-10-29, late).** Each `models.<key>` may list `fallback_model_ids`. A 429 whose QuotaFailure is per-day switches the run to the next model at once (stderr `[model] ... switching to ...`, span event `factory.model_switch`, `result.json` `model_ids_used`); per-minute 429s keep the backoff. Lists: lite tiers `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`; spike implement `gemini-3.8-flash` → `gemini-3.6-flash` → `gemini-3-flash-preview`, capped at 50 model calls. Gotcha found live: strands yields `messageStart` before reading the stream and the 429 surfaces on that read, so the wrapper holds `messageStart` back until content arrives. Verified live: 3.6 Flash (exhausted) switched to 3 Flash and answered.
 
-**Issue 107 (the first spike): clean dry run, awaiting the owner.** It is still `status:backlog` + `needs-human` + `spike`, so the cron skips it. Dry runs:
+**Issue 107 (the first spike): released to the cron.** The owner's session removed `needs-human` at 21:25 UTC on 2026-10-29; labels are now `status:backlog` + `spike` + `factory:accepted` + `risk:low size:S`, so the next tick dispatches the builder live. Dry runs before that:
 
 | Run | Result |
 |---|---|
@@ -76,23 +76,26 @@ Later on 2026-10-28 (23:00 to 23:40 UTC): triage ran live on epic 106 (children 
 | 40916924033 | passed checks; flash-lite ignored `in_dreamteam`, false "no Primeira Liga coverage" claim |
 | 40951538447 | **good**: `check-findings` ok; found `elements[].stats.in_dreamteam` (`event/<n>/live/`) and `events[].top_element_info`; ESPN `summary` on a finished `por.1` match; Liga Portugal awards only as HTML news; API-Football 403 without a key. Implement: 27 flash calls, 9 throttle retries, 533k tokens |
 
-Next: remove `needs-human` on 107 so the cron runs it live (a live run makes fresh findings; it must pass the same checks or the run fails and the issue stays `status:in-progress`).
+Next: check 107's live run. Success = a `<!-- factory:findings -->` comment with the pipeline's `## Evidence` list, `status:done`, issue closed; read the findings (the checks verify statuses, not fields). If the run fails the checks or exhausts every flash model, the Discord alert fires and the issue stays `status:in-progress`; reset it to `status:backlog` by hand. The live run is the first use of the spike apply branch against GitHub and of the daily-quota fallback in CI.
 
-**Issue 115** (filed 2026-10-29 by the owner's session, unlabelled for triage): remove API-Football from fantasy-football (unused at runtime; UEFA rotation already reads ESPN) and spike other football data providers. The `API_FOOTBALL_KEY` line in the target's `factory.yml` must be removed by a human (agents cannot edit `factory.yml`).
+**Issue 115** (filed 2026-10-29 by the owner's session): remove API-Football from fantasy-football (unused at runtime; UEFA rotation already reads ESPN) and spike other football data providers. Triage (run 40952684621, 20:51 UTC) labelled it `epic risk:high size:L` and created:
+
+- **116** Remove API-Football client, environment variable, and docs references: `risk:high size:M`, so the builder waits for `plan:approved` and its PR is lit (human review). The `API_FOOTBALL_KEY` line in the target's `factory.yml` must be removed by a human (agents cannot edit `factory.yml`).
+- **117** Spike other football API providers for Primeira Liga coverage: `risk:low size:S spike factory:accepted`, eligible now. The builder takes one feature per tick, so 107 and 117 can both run on 2026-10-29; with 3.6 Flash already exhausted that day, the second spike may run out of flash requests (about 30 left across 3.8 Flash and 3 Flash) and fail. If it does, reset it to `status:backlog`; it runs after the Pacific-midnight reset.
 
 Fixes made while graduating, all pushed: issue and PR inputs come from the REST API (`gh --json` has no `authorAssociation`); Google retired the 2.5 Gemini models for new keys, so both tiers use `gemini-3.5-flash(-lite)` with `thinking_level: minimal`; Honeycomb endpoints point at the EU region; the cron passes the oldest Dependabot PR number to the reviewer (a run without `pr` reviews nothing and still spends ~18 model calls). All of these are deployed.
 
-Verification at handoff (2026-10-29, commit `72cd980`, CI run 40952612166 green, all jobs including deploy and label sync):
+Verification at handoff (2026-10-29, commit `88e646f`, CI green on all jobs; the deploy job skipped because `control-plane/` did not change):
 
 | Check | Result |
 |---|---|
-| `uv run pytest -q` | 176 passed |
+| `uv run pytest -q` | 184 passed |
 | `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 27 passed, clean, succeeds |
 | `actionlint`, `shellcheck -x scripts/*.sh`, `scripts/check-config-sync.sh` | clean |
 | profile validation on example and template | both valid; empty file rejected |
 | deny-list composition | example profile blocks `wrangler` and `EVAL_LIVE`, template only baseline; `git push` and `factory.yml` edits blocked in both |
 
-Exercised live since: the Gemini path, OTLP export to Honeycomb, `gh` mutations for triage, review, merge and verify, the smoke run, webhooks, Tavily search and real fetches (in dry runs). Not yet live: the spike apply branch against GitHub (stub `gh` only), the bug-fixer, the incident responder.
+Exercised live since: the Gemini path, OTLP export to Honeycomb, `gh` mutations for triage, review, merge and verify, the smoke run, webhooks, Tavily search and real fetches (in dry runs), the daily-quota model switch (local, against the real API: exhausted 3.6 Flash switched to 3 Flash). Not yet live: the spike apply branch against GitHub (stub `gh` only), the bug-fixer, the incident responder.
 
 **Target repo: onboarded.** `nimeshjm/fantasy-football` PR 99 (onboarding) and PR 114 (`web.allowed_hosts: ["*"]`) are merged.
 
@@ -106,7 +109,7 @@ Exercised live since: the Gemini path, OTLP export to Honeycomb, `gh` mutations 
 6. Done. Deploy the control plane (`control-plane/README.md`), set its secrets, register the webhook for `issues, pull_request, check_suite, workflow_run`.
    Since 2026-10-28 23:15 UTC CI redeploys the Worker on push to `main` (`deploy-control-plane` job in `ci.yml`); since 2026-10-29 only when the push changes `control-plane/**` or `ci.yml` (compared against the push's `before` commit; a missing `before` deploys). On 2026-10-29 the owner replaced `CLOUDFLARE_API_TOKEN` with a valid token (`/user/tokens/verify` reports active; current tokens are 53 characters, so length is not a validity check). CI run 40788060878 then deployed the Worker (version `d3dbe4f3-a4b0-403f-9ffa-e2e9bf0ac1bb`). To rotate: put the token in `.env`, then `sed -n 's/^CLOUDFLARE_API_TOKEN=//p' .env | tr -d '\r\n"' | gh secret set CLOUDFLARE_API_TOKEN` (macOS grep has no `-P`).
 7. Honeycomb: stays `enabled: false` in the target's `factory.yml`. The read path (`scripts/honeycomb-query.sh`, `factory/tools/honeycomb.py`) uses the Query Data API, which Honeycomb gates to Enterprise; on the free plan a configuration key cannot carry Run Queries, so liveness and error polling cannot work. The verifier falls back to the smoke checks and the incident responder emits an empty list by design. Ingest (factory telemetry via OTLP and control-plane events) works on the free plan and is wired to the EU region. To get the read path back, port it to the Honeycomb MCP server (`honeycomb.mcp_url`, available on all plans) and then revisit the `faas.trigger` liveness filter. The Honeycomb MCP is connected to the owner's Claude Code (2026-10-29) for investigating runs; the factory itself does not use it yet.
-8. Graduate loops in order, each first with `dry_run=true` via `gh workflow run <agent>.yml -f dry_run=true ...`: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder. Done: triage, reviewer, verifier, builder (code). In progress: builder spikes (issue 107 has a clean dry run; owner removes `needs-human` to go live). Not yet: bug-fixer (now with web research), incident responder.
+8. Graduate loops in order, each first with `dry_run=true` via `gh workflow run <agent>.yml -f dry_run=true ...`: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder. Done: triage, reviewer, verifier, builder (code). In progress: builder spikes (107 and 117 released to the cron on 2026-10-29). Not yet: bug-fixer (now with web research), incident responder.
 
 ## Known gaps and judgement calls
 
