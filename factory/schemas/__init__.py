@@ -22,6 +22,7 @@ from .models import (
     ResearchArtifact,
     ReviewProposal,
     RunResult,
+    ToolCall,
     TriageProposal,
     Usage,
     VerifyBug,
@@ -138,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 __all__ = [
-    "ALL_MODELS", "AgentCheck", "BuildProposal", "CiFix", "GuardEvent", "Incident", "IncidentProposal",
+    "ALL_MODELS", "AgentCheck", "BuildProposal", "CiFix", "GuardEvent", "ToolCall", "Incident", "IncidentProposal",
     "InlineComment", "PlanArtifact", "ResearchArtifact", "ReviewProposal", "RunResult", "TargetProfile", "TriageProposal",
     "Usage", "VerifyBug", "VerifyProposal", "dump_schemas", "proposal_model_for",
 ]

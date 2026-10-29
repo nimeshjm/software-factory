@@ -139,6 +139,14 @@ class GuardEvent(_Base):
     ts: str
 
 
+class ToolCall(_Base):
+    name: str
+    target: str = ""
+    status: Literal["ok", "error", "blocked"]
+    http_status: int | None = None
+    ts: str
+
+
 class RunResult(_Base):
     run_id: str
     agent: str
@@ -150,6 +158,7 @@ class RunResult(_Base):
     cycles: int = 0
     duration_s: float = 0.0
     guard_events: list[GuardEvent] = Field(default_factory=list)
+    tool_calls: list[ToolCall] = Field(default_factory=list)
     throttles: int = 0
     error: str | None = None
     dry_run: bool = False

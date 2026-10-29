@@ -236,6 +236,7 @@ jobs:
           TAVILY_API_KEY: ${{ (inputs.agent == 'builder' || inputs.agent == 'bug-fixer') && secrets.TAVILY_API_KEY || '' }}
           AGENT: ${{ inputs.agent }}
           PHASES: ${{ steps.phases.outputs.phases }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: scripts/run-phases.sh
 
       - name: Print proposal (dry run)

@@ -13,11 +13,11 @@ from typing import Any
 
 from . import telemetry
 from .config import ROOT, ProfileError, load_config, load_profile, resolve_run_spec
-from .guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard, ToolGuard, build_context_kwargs
+from .guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard, ToolCallLog, ToolGuard, build_context_kwargs
 from .guards.output_guard import redact, scan_obj
 from .tools.profile import set_profile
 from .prompts import build_task_message, load_system_prompt
-from .schemas import GuardEvent, RunResult, proposal_model_for
+from .schemas import GuardEvent, RunResult, ToolCall, proposal_model_for
 
 FINALIZE_PROMPT = "Time budget is spent. Emit the final structured proposal now, based on what you have."
 
@@ -59,6 +59,7 @@ def run(args: argparse.Namespace) -> int:
     log = GuardLog()
     quota: QuotaGuard | None = None
     latency: LatencyGuard | None = None
+    tool_log: ToolCallLog | None = None
     result = RunResult(run_id=str(run_id), agent=args.agent, phase=args.phase, success=False,
                        stop_reason="not_started", dry_run=bool(args.dry_run))
     try:
@@ -80,7 +81,8 @@ def run(args: argparse.Namespace) -> int:
 
         quota = QuotaGuard(spec.max_model_calls, log)
         latency = LatencyGuard(spec.timeout_seconds, log)
-        hooks = [ToolGuard(log, profile), quota, latency,
+        tool_log = ToolCallLog()
+        hooks = [ToolGuard(log, profile), tool_log, quota, latency,
                  ContextGuard(int(spec.context.get("tool_result_max_chars", 20000)), log)]
         trace_attrs: dict[str, Any] = {"factory.run_id": str(run_id), "factory.agent": args.agent,
                                        "factory.phase": args.phase, "factory.dry_run": bool(args.dry_run)}
@@ -146,6 +148,7 @@ def run(args: argparse.Namespace) -> int:
         result.throttles = quota.throttles if quota else 0
         result.duration_s = round(time.monotonic() - started, 2)
         result.guard_events = [GuardEvent(**e) for e in log.events]
+        result.tool_calls = [ToolCall(**c) for c in tool_log.calls] if tool_log else []
         _write(out, "result.json", result.model_dump_json(indent=2))
         telemetry.flush()
     return 0 if result.success else 1

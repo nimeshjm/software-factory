@@ -167,6 +167,10 @@ apply_implement() {
     [ "$AGENT" = builder ] || die "spike findings are builder-only (agent: $AGENT)"
     jq -e '(.web.allowed_hosts // []) | length > 0' "$INPUTS_DIR/factory.json" >/dev/null \
       || die "spike delivery disabled: profile web.allowed_hosts is empty"
+    # Evidence: findings written from memory are never posted; the run must have fetched a source.
+    jq -e '[(.tool_calls // [])[] | select(.name == "fetch_url" and .http_status != null)] | length > 0' \
+      "$OUT_DIR/phases/implement/result.json" >/dev/null 2>&1 \
+      || die "spike findings without any fetched source"
     { printf '%s\n' "$FINDINGS_MARKER"
       jq -r '.findings_md' "$f"
       printf '\n---\n_Factory run %s_\n' "$RUN_ID"

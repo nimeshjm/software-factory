@@ -10,11 +10,14 @@ mkdir -p out/phases
 ok=()
 rc=0
 read -r -a phase_list <<<"$PHASES"
+# --dry-run only labels result.json and the trace; the workflow skips apply on its own.
+dry=()
+if [ "${DRY_RUN:-}" = "true" ]; then dry=(--dry-run); fi
 for phase in "${phase_list[@]}"; do
   export OTEL_RESOURCE_ATTRIBUTES="${OTEL_RESOURCE_ATTRIBUTES_BASE:-},factory.phase=${phase}"
   rm -f out/proposal.json out/result.json
   prc=0
-  uv run --frozen python -m factory.run --agent "$AGENT" --phase "$phase" --inputs inputs/ --out out/ || prc=$?
+  uv run --frozen python -m factory.run --agent "$AGENT" --phase "$phase" --inputs inputs/ --out out/ "${dry[@]}" || prc=$?
   mkdir -p "out/phases/$phase"
   for f in proposal.json result.json research.md plan.md; do
     if [ -f "out/$f" ]; then cp "out/$f" "out/phases/$phase/$f"; fi
