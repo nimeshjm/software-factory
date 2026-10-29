@@ -1,6 +1,6 @@
 # Handoff: software factory
 
-Written 2026-10-28. Everything below is the state at that date.
+Written 2026-10-28, updated 2026-10-29 16:45 UTC (web research, spikes, tool-call evidence, alerts). Everything below is the state at that time.
 
 ## What this is
 
@@ -13,7 +13,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | Location | What |
 |---|---|
 | `/Users/admin/repos/software-factory` | this repo, the factory |
-| `/Users/admin/repos/fantasy-football` | the target, local clone, branch `chore/factory-onboarding` checked out |
+| `/Users/admin/repos/fantasy-football` | the target, local clone, on `main` |
 | `~/.claude/plans/i-want-to-build-moonlit-beacon.md` | plan for the initial build |
 | `~/.claude/plans/make-the-fantasy-application-keen-puddle.md` | plan for the target-agnostic refactor |
 | `CONTRACTS.md` | the shared shapes every part must honour; change it first |
@@ -21,9 +21,9 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 
 ## Repo layout
 
-- `factory/` Python harness: `run.py` entrypoint, `guards/` (tool, quota, latency, context, output), `tools/` (workspace-scoped file, shell, checks, git, Honeycomb), `policy/` (autonomy, merge, author gate), `schemas/` (proposal models and the `TargetProfile`), `prompts.py` (renders `{{target_profile}}`).
+- `factory/` Python harness: `run.py` entrypoint, `gemini.py` (Gemini model that retries 503s), `guards/` (tool, quota, latency, context, output, and `tool_log.py` which records every tool call), `tools/` (workspace-scoped file, shell, checks, git, Honeycomb, `fetch.py`, `web_search.py`), `policy/` (autonomy, merge, author gate, `findings.py` spike checks), `schemas/` (proposal models and the `TargetProfile`), `prompts.py` (renders `{{target_profile}}`).
 - `agents/` system prompts per agent and phase, plus the split review template.
-- `scripts/` the only code that mutates GitHub (`apply-proposal.sh`), input gathering, deploy polling, Honeycomb queries, label bootstrap, config-sync check.
+- `scripts/` the only code that mutates GitHub (`apply-proposal.sh`), input gathering, deploy polling, Honeycomb queries, label sync (run by CI), config-sync check.
 - `.github/workflows/` `agent-run.yml` (reusable harness), six `workflow_dispatch` wrappers, `ci.yml`.
 - `control-plane/` Cloudflare Worker: webhooks, cron pre-flight, ledger, kill switch, GitHub App auth.
 - `smoke/` Playwright HTTP smoke test driven by the profile.
@@ -43,50 +43,67 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 
 Step 8 progress (as of 2026-10-28 22:20 UTC): triage graduated (dry run, then live on issue 35: labels applied, child issues 100 to 103 created; live on 92, which it judged already implemented and the owner closed). Reviewer graduated (dry run, then live on Dependabot PR 96: review posted, `autonomy:lit` applied, no merge, as the policy requires a human approval for dependency bumps). Verifier dry run passed (deploy identity matched, smoke passed, liveness reported disabled). Builder dry run passed all three phases on issue 104, a README-only `risk:low size:S` issue filed for this purpose; the owner then added `status:backlog` so the cron runs it live. The cron's live builder run then completed the whole loop with no human: PR 105 opened 22:32 UTC, the webhook-dispatched reviewer labelled it `autonomy:dark` and squash-merged it at 22:34, the deploy triggered the verifier, which passed (identity, smoke) at 22:35, and issue 104 closed as `status:done`. Builder, reviewer and verifier are graduated live. Not yet run: bug-fixer. Incident responder is deferred (see Honeycomb below).
 
-Later on 2026-10-28 (23:00 to 23:40 UTC): triage ran live on epic 106 (children 107 to 110). The author gate rejected every triage-created child (App bot is `CONTRIBUTOR`), fixed by inheriting `factory:accepted` from a trusted parent; tick skip reasons now list every blocked issue; `GET /status` is documented in `control-plane/README.md`; CI deploys the Worker on push to `main`; `dark_dependency_bumps` lets dependency-only Dependabot bumps merge on green CI (factory side pushed; target side in fantasy-football PR 113, merged 2026-10-28 23:23 UTC). The builder ran live on 107 (a research spike) and failed at apply with "no commits ahead of main": the agent correctly proposed no files, but the only delivery path is a PR. **Issue 107 is stuck at `status:in-progress`** (out of the backlog, nobody flagged) until the spike plan below ships or a human resets it to `status:backlog` + `needs-human`.
+Later on 2026-10-28 (23:00 to 23:40 UTC): triage ran live on epic 106 (children 107 to 110). The author gate rejected every triage-created child (App bot is `CONTRIBUTOR`), fixed by inheriting `factory:accepted` from a trusted parent; tick skip reasons now list every blocked issue; `GET /status` is documented in `control-plane/README.md`; CI deploys the Worker on push to `main`; `dark_dependency_bumps` lets dependency-only Dependabot bumps merge on green CI (factory side pushed; target side in fantasy-football PR 113, merged 2026-10-28 23:23 UTC). The builder ran live on 107 (a research spike) and failed at apply with "no commits ahead of main": the agent correctly proposed no files, but the only delivery path is a PR. Issue 107 was then stuck at `status:in-progress`; it was reset on 2026-10-29 (see below).
 
 **The control plane is live** (resumed 22:00 UTC after a pause during graduation). It has no per-agent gate: every tick dispatches triage for unlabeled issues, the reviewer hourly for the oldest open Dependabot PR, the builder for `status:backlog` features and enhancements, the bug-fixer for backlog bugs, and the incident responder once a day at 06:00 UTC. `POST /admin/pause` stops all of it; `GET /status` shows quota and the last tick's decisions.
 
+**2026-10-29: web research, spikes and evidence (all pushed; last commit `3c24027`, CI green).**
+
+- **Web research.** The builder and the bug-fixer have `web_search` (Tavily free tier) and `fetch_url` in their `research` and `implement` phases, on every issue. The target profile's `web.allowed_hosts` switches both on; fantasy-football has `["*"]` (any public https host; target PR 114, merged). `TAVILY_API_KEY` is set on this repo. Details and rules: `CONTRACTS.md`, `## Web research (web_search, fetch_url) and spikes`.
+- **Spikes.** A builder issue labelled `spike` (investigation only) delivers `findings_md` as a `<!-- factory:findings -->` issue comment, sets `status:done` and closes the issue, with no PR. Apply only posts findings that pass three checks: at least one `fetch_url` with an HTTP response; `check-findings` (every "HTTP status" claimed in a section must match a fetch of a URL in that section); and then it appends a pipeline-built `## Evidence` list of every fetch and search. Builder research and implement on spike issues use `models.spike` (flash-lite, `thinking_level: high`).
+- **Tool-call evidence.** `result.json` has `tool_calls` (name, target, status, http_status), the step log prints a `[tool] ...` line per call, and each call is a `factory.tool_call` span event in Honeycomb (environment `software-factory`, dataset `software-factory`; filter `factory.run_id = gh-<run id>-1`). Dry runs now pass `--dry-run`, so they show `dry_run: true`.
+- **Reliability and alerts.** Gemini `503 UNAVAILABLE` is retried with backoff (`factory/gemini.py`; it killed two reviewer runs on Dependabot PR 111). The control plane alerts to Discord (`ALERT_WEBHOOK_URL`, confirmed working by the owner) on failed or timed-out runs, lost runs, and tick or dispatch failures. Denied runs are not alerted.
+- **Labels** sync to the target on every push to `main` (`sync-labels` job in `ci.yml`); `spike` exists on fantasy-football.
+- **Onboarding guide** (`templates/target/ONBOARDING.md`) now has the right App slug and the factory-side steps (target config and its `wrangler.jsonc` mirror, secrets, push, webhook, dry-run graduation).
+
+**Issue 107 (the first spike) is not done.** It sits at `status:backlog` + `needs-human` + `spike`, so the cron skips it. Three builder dry runs:
+
+| Run | Result |
+|---|---|
+| 40900660253 | stopped after plan: the plan set `needs_human` because it cannot fetch (prompt fixed) |
+| 40904690257 | all phases; Honeycomb shows research made one fetch (404, invented event id) and four searches, implement fetched nothing and wrote findings from memory (evidence check added) |
+| 40908969502 | all phases; implement fetched the ESPN summary at the wrong slug `portugal.1` with `event=0` (400) and the Liga Portugal homepage (200), but the findings claimed 200 for ESPN and for the Fantasy API; the real apply script now rejects it before any GitHub call (claim check and spike model added) |
+
+Next: one more `gh workflow run builder.yml -f issue=107 -f dry_run=true`, with the spike model and claim check live. Read the `[tool]` lines and the implement proposal; remove `needs-human` only if `check-findings` passes and the findings are worth posting. If a live spike fails the checks, the run is marked failed (Discord alert) and the issue stays `status:in-progress`.
+
 Fixes made while graduating, all pushed: issue and PR inputs come from the REST API (`gh --json` has no `authorAssociation`); Google retired the 2.5 Gemini models for new keys, so both tiers use `gemini-3.5-flash(-lite)` with `thinking_level: minimal`; Honeycomb endpoints point at the EU region; the cron passes the oldest Dependabot PR number to the reviewer (a run without `pr` reviews nothing and still spends ~18 model calls). All of these are deployed.
 
-Verification at handoff:
+Verification at handoff (2026-10-29, commit `3c24027`, CI run 40911843673 green):
 
 | Check | Result |
 |---|---|
-| `uv run pytest -q` | 95 passed |
-| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 22 passed, clean, succeeds |
+| `uv run pytest -q` | 170 passed |
+| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 27 passed, clean, succeeds |
 | `actionlint`, `shellcheck -x scripts/*.sh`, `scripts/check-config-sync.sh` | clean |
 | profile validation on example and template | both valid; empty file rejected |
 | deny-list composition | example profile blocks `wrangler` and `EVAL_LIVE`, template only baseline; `git push` and `factory.yml` edits blocked in both |
 
-Not exercised against live services: the real Gemini path (only the fake model ran end to end), Honeycomb queries and OTLP export, `gh` mutations in `apply-proposal.sh`, the Playwright smoke run, the control plane against real GitHub webhooks. All of these have unit tests with mocks or lint only.
+Exercised live since: the Gemini path, OTLP export to Honeycomb, `gh` mutations for triage, review, merge and verify, the smoke run, webhooks, Tavily search and real fetches (in dry runs). Not yet live: the spike apply branch against GitHub (stub `gh` only), the bug-fixer, the incident responder.
 
-**Target repo: onboarding PR open.** `nimeshjm/fantasy-football` PR 99 (`chore/factory-onboarding`) adds `factory.yml`, `.agents/*`, `docs/product-spec.md`, a token-gated `GET /version`, issue and PR templates, and doc fixes. CI, CodeQL and analysis checks are green. It is not merged.
+**Target repo: onboarded.** `nimeshjm/fantasy-football` PR 99 (onboarding) and PR 114 (`web.allowed_hosts: ["*"]`) are merged.
 
 ## Setup still owed by the owner (in order)
 
 1. Done: pushed, public.
 2. Done (PR 99 merged, `GET /version` returns the live SHA). Original note: Merge PR 99 in fantasy-football. After its first deploy, confirm `GET /version` (header `x-dashboard-token`) returns the commit SHA, not `unknown`; the `--var` pass-through in `cloudflare/wrangler-action` is unverified.
 3. Done. Create GitHub App `software-factory-agent-bot` (the name `factory-bot` was taken; `factory.app_slug` is updated to match) (Contents RW, Issues RW, Pull requests RW, Actions RW, Checks R, Metadata R, no Workflows). Install on both repos. Convert the key with `openssl pkcs8 -topk8 -nocrypt` for the Worker.
-4. Done. Secrets in this repo: `GEMINI_API_KEY` (dedicated Google Cloud project; Google AI Plus does not cover the API), `FACTORY_APP_ID`, `FACTORY_APP_PRIVATE_KEY`, `HONEYCOMB_API_KEY`, `HONEYCOMB_QUERY_KEY`, `SMOKE_AUTH_TOKEN` (the dashboard token), `FACTORY_TOKEN`. Variables: `FACTORY_URL`, `TARGET_BASE_URL`.
-5. Done. Labels: run `scripts/preflight-labels.sh` against the target. Ruleset on `main` per `examples/fantasy-football/ONBOARDING.md`.
+4. Done. Secrets in this repo: `GEMINI_API_KEY` (dedicated Google Cloud project; Google AI Plus does not cover the API), `FACTORY_APP_ID`, `FACTORY_APP_PRIVATE_KEY`, `HONEYCOMB_API_KEY`, `HONEYCOMB_QUERY_KEY`, `SMOKE_AUTH_TOKEN` (the dashboard token), `FACTORY_TOKEN`, `TAVILY_API_KEY` (2026-10-29). Variables: `FACTORY_URL`, `TARGET_BASE_URL`. Worker secret `ALERT_WEBHOOK_URL` points at Discord.
+5. Done. Labels: CI's `sync-labels` job runs `scripts/preflight-labels.sh` on every push to `main`. Ruleset on `main` per `templates/target/ONBOARDING.md`.
 6. Done. Deploy the control plane (`control-plane/README.md`), set its secrets, register the webhook for `issues, pull_request, check_suite, workflow_run`.
    Since 2026-10-28 23:15 UTC CI redeploys the Worker on every push to `main` (`deploy-control-plane` job in `ci.yml`). On 2026-10-29 the owner replaced `CLOUDFLARE_API_TOKEN` with a valid token (`/user/tokens/verify` reports active; current tokens are 53 characters, so length is not a validity check). CI run 40788060878 then deployed the Worker (version `d3dbe4f3-a4b0-403f-9ffa-e2e9bf0ac1bb`). To rotate: put the token in `.env`, then `sed -n 's/^CLOUDFLARE_API_TOKEN=//p' .env | tr -d '\r\n"' | gh secret set CLOUDFLARE_API_TOKEN` (macOS grep has no `-P`).
-7. Honeycomb: stays `enabled: false` in the target's `factory.yml`. The read path (`scripts/honeycomb-query.sh`, `factory/tools/honeycomb.py`) uses the Query Data API, which Honeycomb gates to Enterprise; on the free plan a configuration key cannot carry Run Queries, so liveness and error polling cannot work. The verifier falls back to the smoke checks and the incident responder emits an empty list by design. Ingest (factory telemetry via OTLP and control-plane events) works on the free plan and is wired to the EU region. To get the read path back, port it to the Honeycomb MCP server (`honeycomb.mcp_url`, available on all plans) and then revisit the `faas.trigger` liveness filter.
-8. Graduate loops in order, each first with `dry_run=true` via `gh workflow run <agent>.yml -f dry_run=true ...`: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder.
+7. Honeycomb: stays `enabled: false` in the target's `factory.yml`. The read path (`scripts/honeycomb-query.sh`, `factory/tools/honeycomb.py`) uses the Query Data API, which Honeycomb gates to Enterprise; on the free plan a configuration key cannot carry Run Queries, so liveness and error polling cannot work. The verifier falls back to the smoke checks and the incident responder emits an empty list by design. Ingest (factory telemetry via OTLP and control-plane events) works on the free plan and is wired to the EU region. To get the read path back, port it to the Honeycomb MCP server (`honeycomb.mcp_url`, available on all plans) and then revisit the `faas.trigger` liveness filter. The Honeycomb MCP is connected to the owner's Claude Code (2026-10-29) for investigating runs; the factory itself does not use it yet.
+8. Graduate loops in order, each first with `dry_run=true` via `gh workflow run <agent>.yml -f dry_run=true ...`: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder. Done: triage, reviewer, verifier, builder (code). In progress: builder spikes (issue 107, see above). Not yet: bug-fixer (now with web research), incident responder.
 
 ## Known gaps and judgement calls
 
-- 2026-10-29: Gemini 503 `UNAVAILABLE` ("high demand") killed two reviewer runs on Dependabot PR 111: Strands only maps it to a retryable throttle when it arrives as a 4xx. `factory/gemini.py` now retries 503 with Strands' backoff (6 attempts, about a minute); retries count against the run's model-call cap.
-- Alerts (`ALERT_WEBHOOK_URL` on the Worker, Slack/Discord, optional): failed or timed-out runs (from the ledger, with the Actions run link), lost runs, tick and dispatch failures. Denied runs are not alerted. Whether the secret is set on the deployed Worker has not been checked.
-- Tool-call evidence (2026-10-29): `result.json` has `tool_calls` (name, target, status, http_status), the step log prints `[tool] ...` per call, and each call is a `factory.tool_call` span event in Honeycomb. Spike findings are only posted when the implement phase made at least one `fetch_url` call that got an HTTP response. Added after the second dry run on 107 (run 40904690257) produced findings with no HTTP statuses and no evidence that any page had been fetched.
-- Spike findings checks (2026-10-29): `factory.policy check-findings` rejects findings that state an HTTP status for a URL the run never fetched with that status, and apply appends a pipeline-built `## Evidence` list of every fetch and search. Builder research and implement on `spike` issues use `models.spike` (flash-lite, `thinking_level: high`). Third dry run on 107 (run 40908969502) fetched only the ESPN summary at the wrong slug `portugal.1` (400) and the Liga Portugal homepage (200), yet claimed 200 for ESPN and the Fantasy API; the real apply script now dies on it with no GitHub call. **107 still carries `needs-human`; the next step is another `dry_run=true` builder run on it, then removing `needs-human` only if the findings pass.** A failed live spike apply leaves the issue `status:in-progress` (same gap as any failed implement).
-- Labels sync to the target on every push to `main` (`sync-labels` job in `ci.yml`, App token, `scripts/preflight-labels.sh`).
-- Issue `#35` in the target is epic-sized; triage is expected to slice it into child issues on its first run.
+- Spike checks are textual: `check-findings` only verifies statuses written as "HTTP status" next to a URL in the same section. Claims about fields or auth in prose are not checked; the `## Evidence` list lets a reader see what was actually fetched.
+- With `web.allowed_hosts: ["*"]`, a prompt-injected page could get data put into a URL or search query; only the prompts forbid it. The agent holds no GitHub token and reads a public repo, and a leaked Tavily key costs at most the free 1,000 searches a month. DNS rebinding between the address check and the connect is not prevented.
+- Search budget: 10 searches and 20 fetches per phase; Tavily's free tier is about 50 search-heavy runs a month.
+- A Gemini 503 retry counts against the run's model-call cap, so a long outage can still fail a run after about six attempts.
 - Dependabot: at most one merge per reviewer run, cron-triggered only. With the profile's `dark_dependency_bumps: true` (set for fantasy-football on 2026-10-28), bumps confined to `package.json` and `package-lock.json` merge on green CI; `wrangler` and `@cloudflare/*` bumps are still always lit via `lit_dependencies`. The merge-policy trigger is inferred from the PR author, not from a real cron signal.
 - Reviewer runs are debounced per PR for 5 minutes; a push during an in-flight review is skipped, so that review may cover the older commit.
 - Dependency-only PR detection (`toolchain.dependency_files`) only changes merge behaviour when the profile sets `dark_dependency_bumps: true`.
-- A builder or bug-fixer implement phase that proposes no files and no `findings_md` fails the run and leaves the issue `status:in-progress` (any failed implement run does). Builder spikes with `findings_md` are delivered as a comment and closed; see plan A.
+- Any failed builder or bug-fixer implement run (no files and no findings, or spike findings that fail the checks) leaves the issue `status:in-progress`; a human resets it.
 - The control plane mirrors agent limits and identity in `wrangler.jsonc` and `src/config.ts`; `scripts/check-config-sync.sh` in CI catches drift. Its tick must stay under the free plan's 50 subrequests.
 - `--max-budget`-style spend control does not exist for Gemini; the quota guard counts model calls, including throttle retries, so a 429 storm can exhaust a run's cap early.
 - Summarisation inside Strands' context manager makes model calls the quota guard does not see, so ledger call counts can under-report slightly.
@@ -97,27 +114,11 @@ Not exercised against live services: the real Gemini path (only the fake model r
 
 ## Planned work (designed 2026-10-28)
 
-Plan A is implemented (2026-10-29, uncommitted, see below); Plan B is not started. Both plans follow the core rules: agents propose, `apply-proposal.sh` acts; new interfaces go into `CONTRACTS.md` first; each agent graduates with `dry_run=true` before the control plane dispatches it.
+Plan A is shipped (2026-10-29) and grew into general web research; its last step, a clean spike on 107, is open (see State of the work). Plan B is not started. Both plans follow the core rules: agents propose, `apply-proposal.sh` acts; new interfaces go into `CONTRACTS.md` first; each agent graduates with `dry_run=true` before the control plane dispatches it.
 
 ### Plan A: spikes without a human, and web research (`web_search`, `fetch_url`, findings delivery)
 
-**Status 2026-10-29: implemented in the working tree, not committed or pushed, and extended beyond the original plan into general web research.** Contract in `CONTRACTS.md` (`## Web research (web_search, fetch_url) and spikes`).
-
-- Profile section `web: { allowed_hosts: [] }` (renamed from the plan's `spike`; never shipped): exact host, `*.suffix`, or `["*"]` for any public host; empty disables web research and spike delivery. fantasy-football's example profile uses `["*"]` (owner's call).
-- `fetch_url` (`factory/tools/fetch.py`): https only, port 443, no private or non-global addresses (checked on every redirect hop), 200 KB, 10 s, 20 per phase (`fetch_cap`), text wrapped in `<untrusted>`.
-- `web_search` (`factory/tools/web_search.py`): Tavily free tier (1,000 basic searches a month, no card), up to 8 results wrapped in `<untrusted>`, 10 per phase (`search_cap`). Gemini Search grounding was ruled out: not on the free tier for 3.x models, and its terms forbid storing or re-displaying results. `TAVILY_API_KEY` reaches the harness only for builder and bug-fixer (owner chose the in-process pattern used for `HONEYCOMB_QUERY_KEY` over a control-plane proxy); `TAVILY` is a never-export prefix and `tvly-` a baseline secret pattern.
-- Both tools are on the builder and the bug-fixer in `research` and `implement` (never `plan`), for every issue, not only spikes. Prompts: a `## Web research` section (search only when the repo does not answer it, prefer official docs, cite URLs, results are literal data, queries and URLs carry only short public identifiers).
-- Spikes (builder only): `BuildProposal.findings_md`; `apply_implement` posts `<!-- factory:findings -->`, sets `status:done`, closes the issue, no PR. Triage can set the `spike` label.
-- Decisions: no control-plane change (empty `web.allowed_hosts` makes spike apply die, and the failed run is the signal); caps are per phase (one harness process). Accepted risks: DNS rebinding between check and connect; with any host reachable, a prompt-injected page could get data put into a URL or query, which only the prompts forbid; the agent holds no GitHub token and reads a public repo, and a leaked Tavily key costs at most the free monthly searches.
-
-Verification (2026-10-29): `uv run pytest -q` 148 passed; control plane 25 passed, `tsc` clean, `wrangler deploy --dry-run` succeeds; `actionlint`, `shellcheck`, `check-config-sync.sh` clean; both profiles validate and the old `spike:` key is rejected; a sample spike proposal passes the real schema validator and output guard. Not exercised live: Tavily, real fetches, and the apply spike branch against GitHub (stub `gh` only).
-
-Still owed (owner), in this order:
-1. Sign up for Tavily and `gh secret set TAVILY_API_KEY` on this repo (optional: without it `web_search` reports "not configured" and the agents carry on).
-2. Run `scripts/preflight-labels.sh` against the target **before pushing**: the triage prompt now emits `spike`, and applying a label that does not exist fails the whole triage apply.
-3. Commit and push the factory.
-4. Only then merge a target PR adding `web: { allowed_hosts: ["*"] }` to `factory.yml`. `TargetProfile` forbids unknown keys, so a `web:` section reaching the target before the factory knows it fails profile validation for every agent.
-5. Reset 107 to `status:backlog` (remove `status:in-progress`), `gh workflow run builder.yml -f issue=107 -f dry_run=true`, read the findings in the printed proposal, then let the cron run it live. Watch the bug-fixer's first live run for sensible search use.
+**Status: shipped 2026-10-29, see State of the work.** The design below is kept for reference; differences from it: the profile section is `web.allowed_hosts` (not `spike`), `["*"]` allows any public host, `web_search` (Tavily) was added, both tools also go to the bug-fixer and to non-spike issues, and spike delivery requires fetched evidence that matches the findings.
 
 Original design:
 
