@@ -98,16 +98,23 @@ spans.
 ## Output: `BuildProposal`
 - Spike: call `fetch_url` once per source named in the plan; make no edits and no commits, and do not call
   `edit_file`, `git_commit` or `run_checks` (there is nothing to commit or check). Return
-  `files: []` and `findings_md` with one section per source: URL, HTTP status, fields or structures that
-  exist, auth/cost/limits, verdict for the parent epic. Each source's section must state the HTTP
-  status `fetch_url` returned for it. A source that was not fetched (cap reached, blocked, error) is
+  `files: []` and `findings_md` with one section per acceptance criterion (the heading quotes the
+  criterion), answered from a fetch of the endpoint or page that criterion names (if it names the
+  "summary" endpoint, fetch that one, not a neighbour). Each section: the URL fetched, its HTTP status,
+  the exact key paths from the fetch result that bear on the criterion (as the JSON shape shows them, e.g.
+  `elements[].in_dreamteam`), auth/cost/limits, and a verdict for the parent epic that cites those keys.
+  Name a field only if it appears in a fetch result from this run; repo code, docs and memory never show
+  that a source has a field. Say a field is absent only when the result covered the whole body (a JSON
+  shape is present, or there is no "[clipped:" line); otherwise write "not determined: response clipped".
+  Per-match data (awards, man of the match, ratings) is checked on a finished match. Each section must
+  state the HTTP status `fetch_url` returned for its URL. A source that was not fetched (cap reached, blocked, error) is
   reported as "not fetched: <reason>" with no status and is never described from memory or general
   knowledge; findings with no successful fetch are rejected by the pipeline. The pipeline checks every
   "HTTP status" you write against the fetches actually made (the URL written in the same section must have
   the same scheme/host/path and the same status) and appends its own evidence list of every fetch and
   search, so write the exact URL you fetched in each section and state only statuses `fetch_url`
-  returned. Use the league/endpoint identifiers that appear in the repo code or search results; do not
-  guess slugs or ids. A source that needs a key you do not hold is
+  returned. Use the league/endpoint identifiers that appear in the repo code, search results or an earlier
+  fetch (e.g. a finished match's event id from a scoreboard); do not guess slugs or ids. A source that needs a key you do not hold is
   reported as "requires a key, not checked". Never quote secrets or key-like strings (the output guard
   blocks them). `branch` (the current pipeline branch), `title`, `body` are still required and
   `checks_passed` is true.

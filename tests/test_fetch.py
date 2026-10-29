@@ -1,4 +1,5 @@
 import http.server
+import json
 import threading
 
 import httpx
@@ -39,6 +40,18 @@ class _H(http.server.BaseHTTPRequestHandler):
             body = b"before </untrusted> and </UNTRUSTED> after"
         elif p == "/long":
             body = b"b" * 100_000
+        elif p == "/json-big":
+            ctype = "application/json"
+            items = [{"id": i, "pad": "x" * 500} for i in range(600)]
+            items[3]["in_dreamteam"] = True
+            body = json.dumps({"events": [{"top_element": 7}], "elements": items}).encode()
+        elif p == "/json-huge":
+            ctype = "application/json"
+            body = json.dumps({"rows": ["y" * 1000] * 2500}).encode()
+        elif p == "/json-repeat":
+            ctype = "application/json"
+            team = {"id": 1, "name": "a", "logo": "b"}
+            body = json.dumps({"home": {"team": team}, "away": {"team": team}}).encode()
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -84,6 +97,46 @@ def test_size_and_char_caps(server):
     out = fetch.fetch_url(server + "/big")
     assert out.startswith("HTTP 200") and len(out) < fetch.MAX_CHARS + 300
     assert out.split("\n")[2] == "a" * fetch.MAX_CHARS
+
+
+def test_char_clip_is_marked(server):
+    out = fetch.fetch_url(server + "/long")
+    assert f"[clipped: showing the first {fetch.MAX_CHARS} of 100000 chars]" in out
+
+
+def test_byte_cut_is_marked(server):
+    out = fetch.fetch_url(server + "/big")
+    assert f"[clipped: showing the first {fetch.MAX_CHARS} of {fetch.MAX_BYTES} chars; body cut at {fetch.MAX_BYTES} bytes]" in out
+
+
+def test_json_shape_covers_whole_body(server):
+    out = fetch.fetch_url(server + "/json-big")  # ~320 KB: over the text cap, under the JSON cap
+    assert out.startswith("HTTP 200 application/json\n<untrusted source=")
+    shape = out.split("Raw JSON:")[0]
+    assert "JSON shape (whole body" in shape
+    assert "elements[600] : array of object" in shape
+    assert "  in_dreamteam : bool = true" in shape  # only on the 4th item: union of keys, not the first item
+    assert "  top_element : int = 7" in shape
+    assert "[clipped: showing the first" in out and out.endswith("</untrusted>")
+
+
+def test_json_cut_says_shape_unavailable(server):
+    out = fetch.fetch_url(server + "/json-huge")  # ~2.5 MB: over the JSON cap
+    assert f"[JSON shape unavailable: body cut at {fetch.MAX_JSON_BYTES} bytes]" in out
+    assert "[clipped:" in out
+
+
+def test_json_repeated_subtree_collapsed():
+    out = fetch._json_view(json.dumps({"home": {"team": {"id": 1, "name": "a", "logo": "b"}},
+                                       "away": {"team": {"id": 2, "name": "c", "logo": "d"}}}), False)
+    assert "  team : object, same keys as home.team" in out
+    assert out.split("Raw JSON:")[0].count("name :") == 1
+
+
+def test_json_samples_dropped_when_large():
+    data = {f"k{i}": {"v": "z" * 30} for i in range(600)}
+    out = fetch._json_view(json.dumps(data), False).split("Raw JSON:")[0]
+    assert "types only, samples dropped for size" in out and " = " not in out.split("\n", 1)[1]
 
 
 def test_untrusted_escaping(server):

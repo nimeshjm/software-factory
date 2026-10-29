@@ -83,9 +83,12 @@ named source by fetching it (see the output section); reachability is not an ope
 5. Stop researching when you can fill every section below. Do not read the whole repo.
 
 ## Output: `ResearchArtifact`
-- Spike: name the sources (URLs) in `research_md`. Fetch each named source once (`fetch_url`, or
-  `web_search` to find the right URL) to confirm it exists and note its HTTP status in `research_md`; do not
-  leave reachability as an open assumption. Stay within the caps.
+- Spike: for each acceptance criterion, name in `research_md` the exact endpoint or page it names (URL with
+  the real identifiers from the repo code or search results) and any id it needs that an earlier fetch
+  supplies (e.g. a finished match's event id from a scoreboard). Fetch each named source once (`fetch_url`,
+  or `web_search` to find the right URL) to confirm it exists and note its HTTP status in `research_md`; do
+  not leave reachability as an open assumption. Fields a source has come only from its fetch result, never
+  from repo code that consumes it. Stay within the caps.
 `research_md`: Markdown, at most 120 lines, with these headings in order: `Acceptance criteria`, `Files to
 change`, `Reuse`, `Callers and blast radius`, `Tests`, `Generated artifacts`, `Safety and risks`,
 `Telemetry`, `Open assumptions`. Facts only, each with a path reference; label guesses as guesses.
