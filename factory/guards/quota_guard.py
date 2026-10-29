@@ -32,3 +32,7 @@ class QuotaGuard(HookProvider):
     def after_model(self, event: AfterModelCallEvent) -> None:
         if isinstance(event.exception, ModelThrottledException):
             self.throttles += 1
+
+    def extra_call(self) -> None:
+        """Count a request the model re-sent itself (daily-quota fallback) so the cap and the ledger see it."""
+        self.calls += 1

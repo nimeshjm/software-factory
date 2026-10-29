@@ -35,7 +35,8 @@ def _build_model(spec, fake: bool):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set")
-    return FactoryGeminiModel(client_args={"api_key": key}, model_id=spec.model_id, params=spec.params)
+    return FactoryGeminiModel(client_args={"api_key": key}, model_id=spec.model_id, params=spec.params,
+                              fallback_model_ids=spec.fallback_model_ids)
 
 
 def _usage(res) -> dict[str, int]:
@@ -86,12 +87,17 @@ def run(args: argparse.Namespace) -> int:
         hooks = [ToolGuard(log, profile), tool_log, quota, latency,
                  ContextGuard(int(spec.context.get("tool_result_max_chars", 20000)), log)]
         trace_attrs: dict[str, Any] = {"factory.run_id": str(run_id), "factory.agent": args.agent,
-                                       "factory.phase": args.phase, "factory.model": spec.model_key,
+                                       "factory.phase": args.phase, "factory.model": spec.model_key, "factory.model_id": spec.model_id,
                                        "factory.dry_run": bool(args.dry_run)}
         if run_json.get("issue_number") is not None:
             trace_attrs["work_tracker.issue_id"] = str(run_json["issue_number"])
+        model = _build_model(spec, args.fake_model)
+        model_ids_used = getattr(model, "model_ids_used", None)
+        if model_ids_used is not None:
+            result.model_ids_used = model_ids_used
+            model.on_switch = lambda old, new: quota.extra_call()
         agent = Agent(
-            model=_build_model(spec, args.fake_model),
+            model=model,
             system_prompt=load_system_prompt(args.agent, args.phase, Path(os.environ.get("FACTORY_ROOT") or ROOT), profile),
             tools=build_tools(spec.tools),
             hooks=hooks,

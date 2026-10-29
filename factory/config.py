@@ -30,6 +30,7 @@ class RunSpec:
     max_model_calls: int
     timeout_minutes: float
     context: dict[str, Any] = field(default_factory=dict)
+    fallback_model_ids: tuple[str, ...] = ()
 
     @property
     def timeout_seconds(self) -> float:
@@ -77,6 +78,7 @@ def resolve_run_spec(cfg: dict[str, Any], agent: str, phase: str) -> RunSpec:
         max_model_calls=int(eff["max_model_calls"]),
         timeout_minutes=float(eff["timeout_minutes"]),
         context=dict(cfg.get("context", {})),
+        fallback_model_ids=tuple(m.get("fallback_model_ids", [])),
     )
 
 
@@ -84,14 +86,16 @@ SPIKE_MODEL_KEYS = {"research": "spike_research", "implement": "spike"}
 
 
 def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> RunSpec:
-    """Builder research/implement on a `spike` issue use models.spike_research / models.spike instead of the phase's model."""
+    """Builder research/implement on a `spike` issue use models.spike_research / models.spike instead of the phase's model (cap = min of the phase's and the model's max_model_calls)."""
     if spec.agent != "builder" or spec.phase not in SPIKE_MODEL_KEYS or "spike" not in labels:
         return spec
     key = SPIKE_MODEL_KEYS[spec.phase]
     m = cfg.get("models", {}).get(key)
     if not m:
         raise ConfigError(f"unknown model '{key}'")
-    return replace(spec, model_key=key, model_id=m["model_id"], params=json.loads(json.dumps(m.get("params", {}))))
+    cap = min(spec.max_model_calls, int(m["max_model_calls"])) if "max_model_calls" in m else spec.max_model_calls
+    return replace(spec, model_key=key, model_id=m["model_id"], params=json.loads(json.dumps(m.get("params", {}))),
+                   fallback_model_ids=tuple(m.get("fallback_model_ids", [])), max_model_calls=cap)
 
 
 def issue_labels(inputs_dir: str | Path) -> list[str]:

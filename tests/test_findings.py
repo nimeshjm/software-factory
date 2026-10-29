@@ -97,9 +97,15 @@ def test_cli_exit_codes(tmp_path, capsys):
 def test_spike_model_selection(tmp_path):
     cfg = load_config()
     base = resolve_run_spec(cfg, "builder", "implement")
-    for phase, key, model in (("research", "spike_research", "gemini-3.5-flash-lite"), ("implement", "spike", "gemini-3.5-flash")):
+    for phase, key, model in (("research", "spike_research", "gemini-3.5-flash-lite"), ("implement", "spike", "gemini-3.8-flash")):
         s = apply_spike_model(cfg, resolve_run_spec(cfg, "builder", phase), ["spike"])
         assert (s.model_key, s.model_id) == (key, model) and s.params["thinking_config"]["thinking_level"] == "high"
+    impl = apply_spike_model(cfg, base, ["spike"])
+    assert impl.fallback_model_ids == ("gemini-3.6-flash", "gemini-3-flash-preview")
+    assert (base.max_model_calls, impl.max_model_calls) == (60, 50)
+    assert apply_spike_model(cfg, resolve_run_spec(cfg, "builder", "research"), ["spike"]).fallback_model_ids == ("gemini-3.1-flash-lite",)
+    low = {**cfg, "models": {**cfg["models"], "spike": {**cfg["models"]["spike"], "max_model_calls": 90}}}
+    assert apply_spike_model(low, base, ["spike"]).max_model_calls == 60
     for key in ("spike_research", "spike"):
         broken = {**cfg, "models": {k: v for k, v in cfg["models"].items() if k != key}}
         phase = "research" if key == "spike_research" else "implement"

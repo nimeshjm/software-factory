@@ -160,5 +160,6 @@ class RunResult(_Base):
     guard_events: list[GuardEvent] = Field(default_factory=list)
     tool_calls: list[ToolCall] = Field(default_factory=list)
     throttles: int = 0
+    model_ids_used: list[str] = Field(default_factory=list)
     error: str | None = None
     dry_run: bool = False
