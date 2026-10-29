@@ -86,7 +86,7 @@ SPIKE_MODEL_KEYS = {"research": "spike_research", "implement": "spike"}
 
 
 def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> RunSpec:
-    """Builder research/implement on a `spike` issue use models.spike_research / models.spike instead of the phase's model (cap = min of the phase's and the model's max_model_calls)."""
+    """Builder research/implement on a `spike` issue use models.spike_research / models.spike instead of the phase's model (caps = min of the phase's and the model's max_model_calls and total_tokens, each when both exist)."""
     if spec.agent != "builder" or spec.phase not in SPIKE_MODEL_KEYS or "spike" not in labels:
         return spec
     key = SPIKE_MODEL_KEYS[spec.phase]
@@ -94,8 +94,11 @@ def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> 
     if not m:
         raise ConfigError(f"unknown model '{key}'")
     cap = min(spec.max_model_calls, int(m["max_model_calls"])) if "max_model_calls" in m else spec.max_model_calls
+    limits = dict(spec.limits)
+    if "total_tokens" in m and "total_tokens" in limits:
+        limits["total_tokens"] = min(limits["total_tokens"], int(m["total_tokens"]))
     return replace(spec, model_key=key, model_id=m["model_id"], params=json.loads(json.dumps(m.get("params", {}))),
-                   fallback_model_ids=tuple(m.get("fallback_model_ids", [])), max_model_calls=cap)
+                   fallback_model_ids=tuple(m.get("fallback_model_ids", [])), max_model_calls=cap, limits=limits)
 
 
 def issue_labels(inputs_dir: str | Path) -> list[str]:

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -97,13 +98,16 @@ def test_cli_exit_codes(tmp_path, capsys):
 def test_spike_model_selection(tmp_path):
     cfg = load_config()
     base = resolve_run_spec(cfg, "builder", "implement")
-    for phase, key, model in (("research", "spike_research", "gemini-3.5-flash-lite"), ("implement", "spike", "gemini-3.8-flash")):
+    for phase, key, model in (("research", "spike_research", "gemini-3.8-flash"), ("implement", "spike", "gemini-3.5-flash-lite")):
         s = apply_spike_model(cfg, resolve_run_spec(cfg, "builder", phase), ["spike"])
         assert (s.model_key, s.model_id) == (key, model) and s.params["thinking_config"]["thinking_level"] == "high"
     impl = apply_spike_model(cfg, base, ["spike"])
-    assert impl.fallback_model_ids == ("gemini-3.6-flash", "gemini-3-flash-preview")
-    assert (base.max_model_calls, impl.max_model_calls) == (60, 50)
-    assert apply_spike_model(cfg, resolve_run_spec(cfg, "builder", "research"), ["spike"]).fallback_model_ids == ("gemini-3.1-flash-lite",)
+    res_base = resolve_run_spec(cfg, "builder", "research")
+    research = apply_spike_model(cfg, res_base, ["spike"])
+    assert research.fallback_model_ids == ("gemini-3.6-flash", "gemini-3-flash-preview")
+    assert impl.fallback_model_ids == ("gemini-3.1-flash-lite",)
+    assert (base.max_model_calls, impl.max_model_calls) == (60, 15)
+    assert research.max_model_calls == min(res_base.max_model_calls, 25)
     low = {**cfg, "models": {**cfg["models"], "spike": {**cfg["models"]["spike"], "max_model_calls": 90}}}
     assert apply_spike_model(low, base, ["spike"]).max_model_calls == 60
     for key in ("spike_research", "spike"):
@@ -119,3 +123,24 @@ def test_spike_model_selection(tmp_path):
     (tmp_path / "issue.json").write_text(json.dumps({"labels": ["spike", {"name": "bug"}]}))
     assert issue_labels(tmp_path) == ["spike", "bug"]
     assert issue_labels(tmp_path / "none") == []
+
+
+def test_spike_total_tokens_cap():
+    cfg = load_config()
+    base = resolve_run_spec(cfg, "builder", "implement")
+    assert apply_spike_model(cfg, base, ["spike"]).limits["total_tokens"] == min(base.limits["total_tokens"], 300000)
+    for cap, want in ((100, 100), (10**9, base.limits["total_tokens"])):
+        m = {**cfg, "models": {**cfg["models"], "spike": {**cfg["models"]["spike"], "total_tokens": cap}}}
+        assert apply_spike_model(m, base, ["spike"]).limits["total_tokens"] == want
+    none = {**cfg, "models": {**cfg["models"], "spike": {k: v for k, v in cfg["models"]["spike"].items() if k != "total_tokens"}}}
+    assert apply_spike_model(none, base, ["spike"]).limits == base.limits
+    nolimit = replace(base, limits={k: v for k, v in base.limits.items() if k != "total_tokens"})
+    assert "total_tokens" not in apply_spike_model(cfg, nolimit, ["spike"]).limits
+
+
+def test_claims_backed_only_by_research_fetches():
+    md = "### A\nhttps://example.com/a\nHTTP status: 200\n"
+    research = res(fetch("https://example.com/a", 200), phase="research")
+    implement = res(phase="implement")
+    assert check_findings(md, [research, implement]) == []
+    assert check_findings(md, [implement]) != []

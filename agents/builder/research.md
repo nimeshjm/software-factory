@@ -83,13 +83,18 @@ named source by fetching it (see the output section); reachability is not an ope
 5. Stop researching when you can fill every section below. Do not read the whole repo.
 
 ## Output: `ResearchArtifact`
-- Spike: for each acceptance criterion, name in `research_md` the exact endpoint or page it names (URL with
-  the real identifiers from the repo code or search results) and any id it needs that an earlier fetch
-  supplies (e.g. a finished match's event id from a scoreboard). Fetch each named source once (`fetch_url`,
-  or `web_search` to find the right URL) to confirm it exists and note its HTTP status in `research_md`; do
-  not leave reachability as an open assumption. Fields a source has come only from its fetch result, never
-  from repo code that consumes it. Stay within the caps.
-`research_md`: Markdown, at most 120 lines, with these headings in order: `Acceptance criteria`, `Files to
+- Spike: you are the phase that looks at the data; implement (a cheaper model) only writes it up from what you
+  record, so do all the fetching. Fetch every source each acceptance criterion names (`fetch_url`, or
+  `web_search` to find the right URL), using the real identifiers from the repo code or search results and
+  any id an earlier fetch supplies (e.g. a finished match's event id from a scoreboard). Do not leave
+  reachability as an open assumption. Per criterion, record in `research_md` an evidence block: the exact URL
+  fetched, its HTTP status, the relevant key paths copied verbatim from the fetch result's JSON shape (or the
+  relevant page text, quoted briefly), and one or two sample values. Write "absent" for a field only when
+  the result covered the whole body (a JSON shape is present, or there is no "[clipped:" line); otherwise
+  "not determined: response clipped". For a source that needs a key, record the status a keyless fetch
+  returned. Fields a source has come only from its fetch result, never from repo code that consumes it.
+  Stay within the caps.
+`research_md`: Markdown, at most 120 lines (160 for a spike, to fit the evidence blocks), with these headings in order: `Acceptance criteria`, `Files to
 change`, `Reuse`, `Callers and blast radius`, `Tests`, `Generated artifacts`, `Safety and risks`,
 `Telemetry`, `Open assumptions`. Facts only, each with a path reference; label guesses as guesses.
 

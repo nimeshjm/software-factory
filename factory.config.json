@@ -48,10 +48,12 @@
       }
     },
     "spike_research": {
-      "model_id": "gemini-3.5-flash-lite",
+      "model_id": "gemini-3.8-flash",
       "fallback_model_ids": [
-        "gemini-3.1-flash-lite"
+        "gemini-3.6-flash",
+        "gemini-3-flash-preview"
       ],
+      "max_model_calls": 25,
       "params": {
         "temperature": 0.2,
         "max_output_tokens": 16384,
@@ -61,12 +63,12 @@
       }
     },
     "spike": {
-      "model_id": "gemini-3.8-flash",
+      "model_id": "gemini-3.5-flash-lite",
       "fallback_model_ids": [
-        "gemini-3.6-flash",
-        "gemini-3-flash-preview"
+        "gemini-3.1-flash-lite"
       ],
-      "max_model_calls": 50,
+      "max_model_calls": 15,
+      "total_tokens": 300000,
       "params": {
         "temperature": 0.2,
         "max_output_tokens": 16384,

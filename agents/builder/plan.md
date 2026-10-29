@@ -87,9 +87,9 @@ spans.
    `risk:high` issues. Needing external sites or APIs inspected in a spike is none of these (see Spikes).
 
 ## Output: `PlanArtifact`
-- Spike: `files` is an empty list and `steps` lists the fetches, one per acceptance criterion, each naming
-  the endpoint that criterion names and where any id it needs comes from (repo code, search, or an earlier
-  step's fetch). Do not fetch.
+- Spike: `files` is an empty list and `steps` lists the fetches research made, per acceptance criterion, each
+  naming the endpoint that criterion names, and any gap implement must fetch (research marked it not
+  fetched, failed, or clipped). Do not fetch.
   `needs_human` is false per the Spikes rule.
 - `plan_md`: Markdown, at most 100 lines, headings in order: `Goal`, `Acceptance criteria to tests` (a table
   criterion -> test), `Steps`, `Files`, `Tests`, `Telemetry`, `Rollback`, `Risks`. This is posted as an issue

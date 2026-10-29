@@ -96,14 +96,17 @@ spans.
 8. Self-review the diff once against the acceptance criteria and the plan. Fix drift before emitting.
 
 ## Output: `BuildProposal`
-- Spike: call `fetch_url` once per source named in the plan; make no edits and no commits, and do not call
+- Spike: the research phase already fetched the sources and recorded per-criterion evidence in the
+  `research.md` artifact in the task context; write `findings_md` from it. Do not re-fetch a URL research
+  recorded, and do not call `retrieve_context` to re-read research fetches. Call `fetch_url` only for a
+  criterion research marked not fetched, failed, or "not determined: response clipped". Make no edits and no commits, and do not call
   `edit_file`, `git_commit` or `run_checks` (there is nothing to commit or check). Return
   `files: []` and `findings_md` with one section per acceptance criterion (the heading quotes the
-  criterion), answered from a fetch of the endpoint or page that criterion names (if it names the
-  "summary" endpoint, fetch that one, not a neighbour). Each section: the URL fetched, its HTTP status,
+  criterion), answered from a fetch (research's or yours) of the endpoint or page that criterion names (if
+  it names the "summary" endpoint, that one, not a neighbour). Each section: the URL fetched, its HTTP status,
   the exact key paths from the fetch result that bear on the criterion (as the JSON shape shows them, e.g.
   `elements[].in_dreamteam`), auth/cost/limits, and a verdict for the parent epic that cites those keys.
-  Name a field only if it appears in a fetch result from this run; repo code, docs and memory never show
+  Name a field only if it appears in a fetch result from this run (research's fetches count: the pipeline's evidence list includes its tool calls); repo code, docs and memory never show
   that a source has a field. Say a field is absent only when the result covered the whole body (a JSON
   shape is present, or there is no "[clipped:" line); otherwise write "not determined: response clipped".
   Per-match data (awards, man of the match, ratings) is checked on a finished match. Each section must
