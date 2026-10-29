@@ -35,6 +35,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | `/Users/admin/repos/software-factory` | this repo, the factory, public at `nimeshjm/software-factory` |
 | `/Users/admin/repos/fantasy-football` | the target, local clone, on `main` |
 | `CONTRACTS.md` | the shared shapes every part must honour; change it first |
+| `docs/history.md` | the build and graduation log, setup steps and the Plan A design, trimmed from this file on 2026-10-29 |
 | `README.md`, `scripts/README.md`, `control-plane/README.md`, `agents/README.md` | runbooks per area |
 | `.env` (git-ignored) | local copies of every secret and known value |
 | `https://factory-control-plane.nimeshjm.workers.dev/status` | control plane health: quota, in-flight runs, last tick's decisions (no token) |
