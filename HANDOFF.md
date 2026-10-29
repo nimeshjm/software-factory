@@ -1,6 +1,6 @@
 # Handoff: software factory
 
-Written 2026-10-28, updated 2026-10-29 16:45 UTC (web research, spikes, tool-call evidence, alerts). Everything below is the state at that time.
+Written 2026-10-28, updated 2026-10-29 21:30 UTC (JSON fetch shape, spike model split, issue 107 clean dry run, issue 115). Everything below is the state at that time.
 
 ## What this is
 
@@ -56,23 +56,36 @@ Later on 2026-10-28 (23:00 to 23:40 UTC): triage ran live on epic 106 (children 
 - **Labels** sync to the target on every push to `main` (`sync-labels` job in `ci.yml`); `spike` exists on fantasy-football.
 - **Onboarding guide** (`templates/target/ONBOARDING.md`) now has the right App slug and the factory-side steps (target config and its `wrangler.jsonc` mirror, secrets, push, webhook, dry-run graduation).
 
-**Issue 107 (the first spike) is not done.** It sits at `status:backlog` + `needs-human` + `spike`, so the cron skips it. Three builder dry runs:
+**2026-10-29 evening: spikes made reliable (pushed; last commit `72cd980`, CI run 40952612166 green, Worker deployed).**
+
+- **`fetch_url` sees whole JSON bodies.** Run 40912644032 showed why the 107 findings missed the fantasy dream-team fields: `bootstrap-static/` is 1.1 MB, and the tool passed only its first 20,000 chars (`elements`, with `in_dreamteam`, starts at char 36,441). JSON responses are now read up to 2 MB and start with an indented key tree of the whole body (types, short samples, array lengths, union of the keys of the first 50 items, repeated subtrees collapsed to "same keys as ..."), then the raw text. Every cut is marked `[clipped: ...]`, and the whole result fits in the context guard's 20,000 chars so the guard no longer cuts its middle. Details: `CONTRACTS.md`, `fetch_url`.
+- **Spike prompts.** Findings have one section per acceptance criterion, fetched from the endpoint that criterion names, listing key paths seen in this run's fetches; a field is "absent" only when the result covered the whole body. Ids may come from an earlier fetch (a finished match from a scoreboard).
+- **Budget.** Builder and bug-fixer `research` now allow 600k tokens (run 40915023768 died at the old 300k after file reads plus fetches).
+- **Spike model split.** flash-lite still ignored fields the tool showed it (run 40916924033). Spike `implement` now runs `models.spike` = `gemini-3.5-flash` (`thinking_level: high`); spike `research` runs `models.spike_research` = flash-lite. Honeycomb confirmed the split on run 40951538447.
+
+**Issue 107 (the first spike): clean dry run, awaiting the owner.** It is still `status:backlog` + `needs-human` + `spike`, so the cron skips it. Dry runs:
 
 | Run | Result |
 |---|---|
-| 40900660253 | stopped after plan: the plan set `needs_human` because it cannot fetch (prompt fixed) |
-| 40904690257 | all phases; Honeycomb shows research made one fetch (404, invented event id) and four searches, implement fetched nothing and wrote findings from memory (evidence check added) |
-| 40908969502 | all phases; implement fetched the ESPN summary at the wrong slug `portugal.1` with `event=0` (400) and the Liga Portugal homepage (200), but the findings claimed 200 for ESPN and for the Fantasy API; the real apply script now rejects it before any GitHub call (claim check and spike model added) |
+| 40900660253 | stopped after plan: plan set `needs_human` (prompt fixed) |
+| 40904690257 | findings written from memory (evidence check added) |
+| 40908969502 | claimed statuses it never got (claim check and spike model added) |
+| 40912644032 | passed checks; missed `in_dreamteam` (tool clipped the body) |
+| 40915023768 | research hit 300k tokens (cap raised) |
+| 40916924033 | passed checks; flash-lite ignored `in_dreamteam`, false "no Primeira Liga coverage" claim |
+| 40951538447 | **good**: `check-findings` ok; found `elements[].stats.in_dreamteam` (`event/<n>/live/`) and `events[].top_element_info`; ESPN `summary` on a finished `por.1` match; Liga Portugal awards only as HTML news; API-Football 403 without a key. Implement: 27 flash calls, 9 throttle retries, 533k tokens |
 
-Next: one more `gh workflow run builder.yml -f issue=107 -f dry_run=true`, with the spike model and claim check live. Read the `[tool]` lines and the implement proposal; remove `needs-human` only if `check-findings` passes and the findings are worth posting. If a live spike fails the checks, the run is marked failed (Discord alert) and the issue stays `status:in-progress`.
+Next: remove `needs-human` on 107 so the cron runs it live (a live run makes fresh findings; it must pass the same checks or the run fails and the issue stays `status:in-progress`).
+
+**Issue 115** (filed 2026-10-29 by the owner's session, unlabelled for triage): remove API-Football from fantasy-football (unused at runtime; UEFA rotation already reads ESPN) and spike other football data providers. The `API_FOOTBALL_KEY` line in the target's `factory.yml` must be removed by a human (agents cannot edit `factory.yml`).
 
 Fixes made while graduating, all pushed: issue and PR inputs come from the REST API (`gh --json` has no `authorAssociation`); Google retired the 2.5 Gemini models for new keys, so both tiers use `gemini-3.5-flash(-lite)` with `thinking_level: minimal`; Honeycomb endpoints point at the EU region; the cron passes the oldest Dependabot PR number to the reviewer (a run without `pr` reviews nothing and still spends ~18 model calls). All of these are deployed.
 
-Verification at handoff (2026-10-29, commit `3c24027`, CI run 40911843673 green):
+Verification at handoff (2026-10-29, commit `72cd980`, CI run 40952612166 green, all jobs including deploy and label sync):
 
 | Check | Result |
 |---|---|
-| `uv run pytest -q` | 170 passed |
+| `uv run pytest -q` | 176 passed |
 | `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 27 passed, clean, succeeds |
 | `actionlint`, `shellcheck -x scripts/*.sh`, `scripts/check-config-sync.sh` | clean |
 | profile validation on example and template | both valid; empty file rejected |
@@ -92,12 +105,16 @@ Exercised live since: the Gemini path, OTLP export to Honeycomb, `gh` mutations 
 6. Done. Deploy the control plane (`control-plane/README.md`), set its secrets, register the webhook for `issues, pull_request, check_suite, workflow_run`.
    Since 2026-10-28 23:15 UTC CI redeploys the Worker on every push to `main` (`deploy-control-plane` job in `ci.yml`). On 2026-10-29 the owner replaced `CLOUDFLARE_API_TOKEN` with a valid token (`/user/tokens/verify` reports active; current tokens are 53 characters, so length is not a validity check). CI run 40788060878 then deployed the Worker (version `d3dbe4f3-a4b0-403f-9ffa-e2e9bf0ac1bb`). To rotate: put the token in `.env`, then `sed -n 's/^CLOUDFLARE_API_TOKEN=//p' .env | tr -d '\r\n"' | gh secret set CLOUDFLARE_API_TOKEN` (macOS grep has no `-P`).
 7. Honeycomb: stays `enabled: false` in the target's `factory.yml`. The read path (`scripts/honeycomb-query.sh`, `factory/tools/honeycomb.py`) uses the Query Data API, which Honeycomb gates to Enterprise; on the free plan a configuration key cannot carry Run Queries, so liveness and error polling cannot work. The verifier falls back to the smoke checks and the incident responder emits an empty list by design. Ingest (factory telemetry via OTLP and control-plane events) works on the free plan and is wired to the EU region. To get the read path back, port it to the Honeycomb MCP server (`honeycomb.mcp_url`, available on all plans) and then revisit the `faas.trigger` liveness filter. The Honeycomb MCP is connected to the owner's Claude Code (2026-10-29) for investigating runs; the factory itself does not use it yet.
-8. Graduate loops in order, each first with `dry_run=true` via `gh workflow run <agent>.yml -f dry_run=true ...`: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder. Done: triage, reviewer, verifier, builder (code). In progress: builder spikes (issue 107, see above). Not yet: bug-fixer (now with web research), incident responder.
+8. Graduate loops in order, each first with `dry_run=true` via `gh workflow run <agent>.yml -f dry_run=true ...`: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder. Done: triage, reviewer, verifier, builder (code). In progress: builder spikes (issue 107 has a clean dry run; owner removes `needs-human` to go live). Not yet: bug-fixer (now with web research), incident responder.
 
 ## Known gaps and judgement calls
 
 - Spike checks are textual: `check-findings` only verifies statuses written as "HTTP status" next to a URL in the same section. Claims about fields or auth in prose are not checked; the `## Evidence` list lets a reader see what was actually fetched.
 - With `web.allowed_hosts: ["*"]`, a prompt-injected page could get data put into a URL or search query; only the prompts forbid it. The agent holds no GitHub token and reads a public repo, and a leaked Tavily key costs at most the free 1,000 searches a month. DNS rebinding between the address check and the connect is not prevented.
+- Spike field claims are prompt-enforced only: `check-findings` ties statuses to fetches but nothing ties a named field to fetched content. Read a spike's findings before acting on them.
+- `gemini-3.5-flash` free tier was quoted at 20 requests a day, yet run 40951538447 made 27 implement calls plus 9 throttle retries and succeeded; the real limit is unconfirmed (check AI Studio). Two spikes in one day may exhaust it; a run that throttles out fails and leaves its issue `status:in-progress`.
+- Other free inference providers (looked at 2026-10-29, third-party figures, no quality comparison found): Mistral's free tier (about 1B tokens a month, prompts may train models; native Strands provider) and NVIDIA NIM (`gpt-oss-120b`, OpenAI-compatible) are the candidates if flash runs out; Groq is out (8k tokens a minute is smaller than one request); OpenRouter free is 50 requests a day. Any switch needs a model adapter beside `factory/gemini.py` and its own quota handling.
+- JSON bodies over 2 MB get no key tree (`[JSON shape unavailable: body cut ...]`), and a very wide JSON drops samples and can still exceed the 20,000-char result.
 - Search budget: 10 searches and 20 fetches per phase; Tavily's free tier is about 50 search-heavy runs a month.
 - A Gemini 503 retry counts against the run's model-call cap, so a long outage can still fail a run after about six attempts.
 - Dependabot: at most one merge per reviewer run, cron-triggered only. With the profile's `dark_dependency_bumps: true` (set for fantasy-football on 2026-10-28), bumps confined to `package.json` and `package-lock.json` merge on green CI; `wrangler` and `@cloudflare/*` bumps are still always lit via `lit_dependencies`. The merge-policy trigger is inferred from the PR author, not from a real cron signal.
@@ -114,7 +131,7 @@ Exercised live since: the Gemini path, OTLP export to Honeycomb, `gh` mutations 
 
 ## Planned work (designed 2026-10-28)
 
-Plan A is shipped (2026-10-29) and grew into general web research; its last step, a clean spike on 107, is open (see State of the work). Plan B is not started. Both plans follow the core rules: agents propose, `apply-proposal.sh` acts; new interfaces go into `CONTRACTS.md` first; each agent graduates with `dry_run=true` before the control plane dispatches it.
+Plan A is shipped (2026-10-29) and grew into general web research; a clean spike dry run on 107 is done, going live waits on the owner removing `needs-human` (see State of the work). Plan B is not started. Both plans follow the core rules: agents propose, `apply-proposal.sh` acts; new interfaces go into `CONTRACTS.md` first; each agent graduates with `dry_run=true` before the control plane dispatches it.
 
 ### Plan A: spikes without a human, and web research (`web_search`, `fetch_url`, findings delivery)
 
