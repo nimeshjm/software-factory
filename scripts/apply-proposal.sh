@@ -168,11 +168,31 @@ apply_implement() {
     jq -e '(.web.allowed_hosts // []) | length > 0' "$INPUTS_DIR/factory.json" >/dev/null \
       || die "spike delivery disabled: profile web.allowed_hosts is empty"
     # Evidence: findings written from memory are never posted; the run must have fetched a source.
-    jq -e '[(.tool_calls // [])[] | select(.name == "fetch_url" and .http_status != null)] | length > 0' \
-      "$OUT_DIR/phases/implement/result.json" >/dev/null 2>&1 \
-      || die "spike findings without any fetched source"
+    # Missing result files count as no calls (fail closed).
+    local res_research="$OUT_DIR/phases/research/result.json" res_implement="$OUT_DIR/phases/implement/result.json"
+    local rfiles=() r
+    for r in "$res_research" "$res_implement"; do if [ -f "$r" ]; then rfiles+=("$r"); fi; done
+    if [ "${#rfiles[@]}" -eq 0 ] \
+      || ! jq -e -s '[.[] | (.tool_calls // [])[] | select(.name == "fetch_url" and .http_status != null)] | length > 0' \
+        "${rfiles[@]}" >/dev/null 2>&1; then
+      die "spike findings without any fetched source"
+    fi
+    # Claims: every "HTTP status" in the findings must match a fetch the run actually made.
+    local claim_rc=0 claim_out violations
+    # stdout only: python warnings on stderr must not corrupt the JSON verdict
+    claim_out="$(uvpy -m factory.policy check-findings --proposal "$f" --results "$res_research" "$res_implement" 2>"$TMP/claims.err")" \
+      || claim_rc=$?
+    if [ "$claim_rc" -ne 0 ]; then
+      violations="$(printf '%s' "$claim_out" | jq -r '.violations | join("; ")' 2>/dev/null)" \
+        || violations="$(printf "%s %s" "$claim_out" "$(cat "$TMP/claims.err")" | head -c 500)"
+      die "spike findings claim unfetched sources: $violations"
+    fi
+    uvpy -m factory.policy evidence-table --results "$res_research" "$res_implement" >"$TMP/evidence.md" \
+      || die "evidence table failed"
     { printf '%s\n' "$FINDINGS_MARKER"
       jq -r '.findings_md' "$f"
+      printf '\n## Evidence (recorded by the pipeline)\n\n'
+      cat "$TMP/evidence.md"
       printf '\n---\n_Factory run %s_\n' "$RUN_ID"
     } | sanitize >"$TMP/findings.md"
     # sanitize leaves the marker intact (no @), so the comment still starts with it

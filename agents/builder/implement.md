@@ -101,8 +101,13 @@ spans.
   `files: []` and `findings_md` with one section per source: URL, HTTP status, fields or structures that
   exist, auth/cost/limits, verdict for the parent epic. Each source's section must state the HTTP
   status `fetch_url` returned for it. A source that was not fetched (cap reached, blocked, error) is
-  reported as "not fetched: <reason>" and is never described from memory or general knowledge; findings
-  with no successful fetch are rejected by the pipeline. A source that needs a key you do not hold is
+  reported as "not fetched: <reason>" with no status and is never described from memory or general
+  knowledge; findings with no successful fetch are rejected by the pipeline. The pipeline checks every
+  "HTTP status" you write against the fetches actually made (the URL written in the same section must have
+  the same scheme/host/path and the same status) and appends its own evidence list of every fetch and
+  search, so write the exact URL you fetched in each section and state only statuses `fetch_url`
+  returned. Use the league/endpoint identifiers that appear in the repo code or search results; do not
+  guess slugs or ids. A source that needs a key you do not hold is
   reported as "requires a key, not checked". Never quote secrets or key-like strings (the output guard
   blocks them). `branch` (the current pipeline branch), `title`, `body` are still required and
   `checks_passed` is true.

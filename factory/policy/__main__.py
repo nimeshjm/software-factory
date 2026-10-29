@@ -4,6 +4,8 @@
   python -m factory.policy merge-policy --pr inputs/pr.json --factory inputs/factory.json \
       [--plan-files out/plan_files.json] --trigger cron|webhook
   python -m factory.policy branch --agent builder|bug-fixer --issue inputs/issue.json
+  python -m factory.policy check-findings --proposal F --results R [R ...]
+  python -m factory.policy evidence-table --results R [R ...]
 """
 
 from __future__ import annotations
@@ -15,12 +17,21 @@ from dataclasses import asdict
 
 from .author import slug
 from .autonomy import classify_autonomy
+from .findings import check_findings, evidence_table
 from .merge import _bumped_deps, merge_policy
 
 
 def _load(path: str):
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _load_result(path: str) -> dict:
+    """A missing result.json counts as no tool calls."""
+    try:
+        return _load(path)
+    except FileNotFoundError:
+        return {"tool_calls": []}
 
 
 def _is_dependabot(pr: dict) -> bool:
@@ -42,7 +53,22 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("branch", help="deterministic feat|fix/<N>-<slug> branch for an issue")
     b.add_argument("--agent", required=True, choices=["builder", "bug-fixer"])
     b.add_argument("--issue", required=True)
+    cf = sub.add_parser("check-findings", help="verify HTTP statuses claimed in spike findings against tool_calls")
+    cf.add_argument("--proposal", required=True)
+    cf.add_argument("--results", nargs="+", required=True)
+    et = sub.add_parser("evidence-table", help="markdown table of fetched URLs and searches from result.json files")
+    et.add_argument("--results", nargs="+", required=True)
     ns = ap.parse_args(argv)
+
+    if ns.cmd in ("check-findings", "evidence-table"):
+        results = [_load_result(p) for p in ns.results]
+        if ns.cmd == "evidence-table":
+            sys.stdout.write(evidence_table(results))
+            return 0
+        violations = check_findings(str(_load(ns.proposal).get("findings_md") or ""), results)
+        json.dump({"ok": not violations, "violations": violations}, sys.stdout)
+        sys.stdout.write("\n")
+        return 1 if violations else 0
 
     if ns.cmd == "branch":
         issue = _load(ns.issue)

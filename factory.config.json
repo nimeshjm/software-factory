@@ -40,6 +40,16 @@
           "thinking_level": "low"
         }
       }
+    },
+    "spike": {
+      "model_id": "gemini-3.5-flash-lite",
+      "params": {
+        "temperature": 0.2,
+        "max_output_tokens": 16384,
+        "thinking_config": {
+          "thinking_level": "high"
+        }
+      }
     }
   },
   "context": {

@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from . import telemetry
-from .config import ROOT, ProfileError, load_config, load_profile, resolve_run_spec
+from .config import (ROOT, ProfileError, apply_spike_model, issue_labels, load_config, load_profile,
+                     resolve_run_spec)
 from .guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard, ToolCallLog, ToolGuard, build_context_kwargs
 from .guards.output_guard import redact, scan_obj
 from .tools.profile import set_profile
@@ -71,7 +72,7 @@ def run(args: argparse.Namespace) -> int:
             result.error = redact(str(e))[:1000]
             return 1
         set_profile(profile)
-        spec = resolve_run_spec(cfg, args.agent, args.phase)
+        spec = apply_spike_model(cfg, resolve_run_spec(cfg, args.agent, args.phase), issue_labels(inputs))
         model_cls = proposal_model_for(args.agent, args.phase)
         telemetry.setup(str(run_id), args.agent, args.phase, run_json.get("issue_number"))
 
@@ -85,7 +86,8 @@ def run(args: argparse.Namespace) -> int:
         hooks = [ToolGuard(log, profile), tool_log, quota, latency,
                  ContextGuard(int(spec.context.get("tool_result_max_chars", 20000)), log)]
         trace_attrs: dict[str, Any] = {"factory.run_id": str(run_id), "factory.agent": args.agent,
-                                       "factory.phase": args.phase, "factory.dry_run": bool(args.dry_run)}
+                                       "factory.phase": args.phase, "factory.model": spec.model_key,
+                                       "factory.dry_run": bool(args.dry_run)}
         if run_json.get("issue_number") is not None:
             trace_attrs["work_tracker.issue_id"] = str(run_json["issue_number"])
         agent = Agent(
