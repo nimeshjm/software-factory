@@ -80,14 +80,18 @@ def resolve_run_spec(cfg: dict[str, Any], agent: str, phase: str) -> RunSpec:
     )
 
 
+SPIKE_MODEL_KEYS = {"research": "spike_research", "implement": "spike"}
+
+
 def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> RunSpec:
-    """Builder research/implement on a `spike` issue use models.spike instead of the phase's model."""
-    if spec.agent != "builder" or spec.phase not in ("research", "implement") or "spike" not in labels:
+    """Builder research/implement on a `spike` issue use models.spike_research / models.spike instead of the phase's model."""
+    if spec.agent != "builder" or spec.phase not in SPIKE_MODEL_KEYS or "spike" not in labels:
         return spec
-    m = cfg.get("models", {}).get("spike")
+    key = SPIKE_MODEL_KEYS[spec.phase]
+    m = cfg.get("models", {}).get(key)
     if not m:
-        raise ConfigError("unknown model 'spike'")
-    return replace(spec, model_key="spike", model_id=m["model_id"], params=json.loads(json.dumps(m.get("params", {}))))
+        raise ConfigError(f"unknown model '{key}'")
+    return replace(spec, model_key=key, model_id=m["model_id"], params=json.loads(json.dumps(m.get("params", {}))))
 
 
 def issue_labels(inputs_dir: str | Path) -> list[str]:

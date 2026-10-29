@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from factory.config import apply_spike_model, issue_labels, load_config, resolve_run_spec
+import pytest
+
+from factory.config import ConfigError, apply_spike_model, issue_labels, load_config, resolve_run_spec
 from factory.policy.__main__ import main
 from factory.policy.findings import check_findings, evidence_table
 
@@ -95,9 +97,14 @@ def test_cli_exit_codes(tmp_path, capsys):
 def test_spike_model_selection(tmp_path):
     cfg = load_config()
     base = resolve_run_spec(cfg, "builder", "implement")
-    for phase in ("research", "implement"):
+    for phase, key, model in (("research", "spike_research", "gemini-3.5-flash-lite"), ("implement", "spike", "gemini-3.5-flash")):
         s = apply_spike_model(cfg, resolve_run_spec(cfg, "builder", phase), ["spike"])
-        assert s.model_key == "spike" and s.params["thinking_config"]["thinking_level"] == "high"
+        assert (s.model_key, s.model_id) == (key, model) and s.params["thinking_config"]["thinking_level"] == "high"
+    for key in ("spike_research", "spike"):
+        broken = {**cfg, "models": {k: v for k, v in cfg["models"].items() if k != key}}
+        phase = "research" if key == "spike_research" else "implement"
+        with pytest.raises(ConfigError, match=key):
+            apply_spike_model(broken, resolve_run_spec(cfg, "builder", phase), ["spike"])
     assert apply_spike_model(cfg, base, ["bug"]) is base
     plan = resolve_run_spec(cfg, "builder", "plan")
     assert apply_spike_model(cfg, plan, ["spike"]) is plan
