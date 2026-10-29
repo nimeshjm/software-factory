@@ -57,7 +57,8 @@ your notes.
 A spike is an issue whose acceptance criteria are all investigation ("investigate", "check", "record
 findings") with no code change. `fetch_url` reads only the hosts on the "Web research" line in the Target
 profile; if that says disabled, say so in your output and attempt no fetches. Choose URLs from the issue, the
-docs or your own knowledge; follow a link from a fetched page only when it is plainly relevant.
+docs or your own knowledge; follow a link from a fetched page only when it is plainly relevant. Confirm each
+named source by fetching it (see the output section); reachability is not an open assumption.
 
 {{target_profile}}
 
@@ -82,7 +83,9 @@ docs or your own knowledge; follow a link from a fetched page only when it is pl
 5. Stop researching when you can fill every section below. Do not read the whole repo.
 
 ## Output: `ResearchArtifact`
-- Spike: name the sources (URLs) to fetch in `research_md`; you may fetch them to confirm they exist.
+- Spike: name the sources (URLs) in `research_md`. Fetch each named source once (`fetch_url`, or
+  `web_search` to find the right URL) to confirm it exists and note its HTTP status in `research_md`; do not
+  leave reachability as an open assumption. Stay within the caps.
 `research_md`: Markdown, at most 120 lines, with these headings in order: `Acceptance criteria`, `Files to
 change`, `Reuse`, `Callers and blast radius`, `Tests`, `Generated artifacts`, `Safety and risks`,
 `Telemetry`, `Open assumptions`. Facts only, each with a path reference; label guesses as guesses.
