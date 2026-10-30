@@ -275,6 +275,24 @@
       },
       "max_model_calls": 25,
       "timeout_minutes": 15
+    },
+    "security-triage": {
+      "model": "cheap",
+      "phases": [
+        "triage"
+      ],
+      "tools": [
+        "read_file",
+        "list_files",
+        "search_files"
+      ],
+      "limits": {
+        "turns": 20,
+        "total_tokens": 200000,
+        "output_tokens": 16000
+      },
+      "max_model_calls": 15,
+      "timeout_minutes": 10
     }
   },
   "honeycomb": {
@@ -321,7 +339,8 @@
       "plan:approved",
       "ci-fix:attempted",
       "factory:accepted",
-      "spike"
+      "spike",
+      "security"
     ]
   }
 }

@@ -20,6 +20,7 @@ CANNED: dict[str, dict[str, Any]] = {
                        "inline_comments": [], "summary_md": "fake", "ci_fix": {"attempted": False}},
     "VerifyProposal": {"outcome": "skipped", "evidence_md": "fake"},
     "IncidentProposal": {"incidents": [], "summary": "fake"},
+    "SecurityProposal": {"findings": [], "resolved": [], "summary": "fake"},
 }
 
 

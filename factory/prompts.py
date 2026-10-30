@@ -160,7 +160,7 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
     deploy = _load(d, "deploy.json")
     if deploy is not None:
         out.append("## deploy.json\n```json\n" + json.dumps(deploy, indent=1) + "\n```")
-    for name in ("smoke.json", "honeycomb.json"):
+    for name in ("smoke.json", "honeycomb.json", "security.json"):
         data = _load(d, name)
         if data is not None:
             out.append(f"## {name}")

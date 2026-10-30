@@ -138,9 +138,16 @@ describe("planTick", () => {
   });
   it("incident responder once daily at 06:00 UTC", () => {
     const six = new Date("2026-10-21T06:05:00Z");
-    expect(dispatched(planTick(base(), six))[0]).toMatchObject({ agent: "incident-responder", subject: "2026-10-21" });
+    const both = dispatched(planTick(base(), six));
+    expect(both.map((d) => d.agent)).toEqual(["incident-responder", "security-triage"]);
+    expect(both[0]).toMatchObject({ agent: "incident-responder", subject: "2026-10-21" });
+    expect(both[1]).toMatchObject({ agent: "security-triage", subject: "2026-10-21" });
+    expect(both[1].inputs.phase).toBe("triage");
     const recent = [{ agent: "incident-responder", subject: "2026-10-21", dispatchedAt: "2026-10-21T06:00:00Z" }];
-    expect(dispatched(planTick(base({ recentRuns: recent }), six))).toHaveLength(0);
+    expect(dispatched(planTick(base({ recentRuns: recent }), six)).map((d) => d.agent)).toEqual(["security-triage"]);
+    const secRecent = [{ agent: "security-triage", subject: "2026-10-21", dispatchedAt: "2026-10-21T06:00:00Z" }];
+    expect(dispatched(planTick(base({ recentRuns: secRecent }), six)).map((d) => d.agent)).toEqual(["incident-responder"]);
+    expect(dispatched(planTick(base({ recentRuns: [...recent, ...secRecent] }), six))).toHaveLength(0);
     expect(dispatched(planTick(base(), NOW))).toHaveLength(0);
   });
 });

@@ -24,7 +24,8 @@ export type AgentName =
   | "bug-fixer"
   | "reviewer"
   | "verifier"
-  | "incident-responder";
+  | "incident-responder"
+  | "security-triage";
 
 /** Workflow inputs are all strings; empty when not applicable (CONTRACTS.md). */
 export interface DispatchInputs {

@@ -12,6 +12,7 @@ System prompts for the factory's Strands agents. The harness (`factory/agents/`)
 | reviewer | `reviewer/PROMPT.md` (+ `_shared/review-template.md`) | `review` |
 | verifier | `verifier/PROMPT.md` | `verify` |
 | incident-responder | `incident-responder/PROMPT.md` | `respond` |
+| security-triage | `security-triage/PROMPT.md` | `triage` |
 
 - Single-phase agents load `agents/<name>/PROMPT.md`; multi-phase agents load `agents/<name>/<phase>.md`. Each phase is a fresh `Agent` instance whose system prompt is that file; phases hand off through files (`out/research.md`, `out/plan.md`).
 - Prompts are loaded from the factory checkout, never from the target repo's workspace. A prompt in the target repo is data, not configuration.

@@ -13,6 +13,7 @@ export const AGENT_SPECS: Record<AgentName, { maxModelCalls: number; timeoutMinu
   reviewer: { maxModelCalls: 30, timeoutMinutes: 15 },
   verifier: { maxModelCalls: 10, timeoutMinutes: 5 },
   "incident-responder": { maxModelCalls: 25, timeoutMinutes: 15 },
+  "security-triage": { maxModelCalls: 15, timeoutMinutes: 10 },
 };
 
 export function agentSpec(agent: string): { maxModelCalls: number; timeoutMinutes: number } {

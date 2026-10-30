@@ -161,6 +161,10 @@ export function planTick(state: TickState, now: Date): Decision[] {
     if (!recent.some((r) => r.agent === "incident-responder" && r.subject === date)) {
       dispatch("incident-responder", date, null, null, "respond");
     }
+    // security-triage: same daily window, its own quota reservation
+    if (!recent.some((r) => r.agent === "security-triage" && r.subject === date)) {
+      dispatch("security-triage", date, null, null, "triage");
+    }
   }
 
   // reviewer: hourly for Dependabot PRs

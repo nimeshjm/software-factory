@@ -33,8 +33,18 @@ gh api repos/<owner>/<target>/hooks -X POST \
   -f name=web -F active=true \
   -f 'config[url]=https://factory-control-plane.<subdomain>.workers.dev/webhooks/github' \
   -f 'config[content_type]=json' -f "config[secret]=$GITHUB_WEBHOOK_SECRET" \
-  -f 'events[]=issues' -f 'events[]=pull_request' -f 'events[]=check_suite' -f 'events[]=workflow_run'
+  -f 'events[]=issues' -f 'events[]=pull_request' -f 'events[]=check_suite' -f 'events[]=workflow_run' \
+  -f 'events[]=code_scanning_alert' -f 'events[]=dependabot_alert'
 ```
+
+For an existing hook, add the security events without replacing the list (`events` replaces the array, `add_events` appends):
+
+```bash
+gh api repos/<owner>/<target>/hooks/<hook_id> -X PATCH \
+  -f 'add_events[]=code_scanning_alert' -f 'add_events[]=dependabot_alert'
+```
+
+The security-triage agent runs once a day in the 06:00 UTC tick (alongside the incident responder) and on a new code-scanning or Dependabot alert, at most one webhook-triggered run per 60 minutes.
 
 Vars in `wrangler.jsonc` (non-secret):
 
@@ -112,7 +122,7 @@ Tests: `npm test` (plain node vitest; WebCrypto is global). `npm run typecheck` 
 
 - Cron triggers: 5 per account on free; this Worker uses 1.
 - D1: 100k rows written/day, 5M read/day. A tick writes a handful of rows; the ledger writes about 3 per run.
-- Subrequests: 50 per invocation. A tick does at most: 2 GitHub list calls (up to 3 pages each via the `maxPages` cap), 0-4 token/installation calls (cached in `tokens` until 5 min before expiry), 1 dispatch per dispatch decision, 1 Honeycomb event per decision, alerts. Do not raise `maxPages` without budgeting.
+- Subrequests: 50 per invocation. A tick does at most: 2 GitHub list calls (up to 3 pages each via the `maxPages` cap), 0-4 token/installation calls (cached in `tokens` until 5 min before expiry), 1 dispatch per dispatch decision, 1 Honeycomb event per decision (the 06:00 UTC tick makes two dispatch decisions, incident responder and security-triage), alerts. Do not raise `maxPages` without budgeting.
 - CPU: 10 ms per request on free; JWT signing only happens on a token cache miss (about hourly).
 
 ## Notes

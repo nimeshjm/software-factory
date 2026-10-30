@@ -98,12 +98,13 @@ gh workflow run bug-fixer.yml -f issue=14 -f dry_run=true
 gh workflow run reviewer.yml -f pr=40 -f dry_run=true
 gh workflow run verifier.yml -f pr=40 -f dry_run=true
 gh workflow run incident-responder.yml -f dry_run=true
+gh workflow run security-triage.yml -f dry_run=true
 ```
 `dry_run=true` runs the model and prints the proposal; nothing is applied. Artifacts (`out/**`) are kept for one day.
 
 ## Graduation order
 
-All wrappers with `dry_run=true`, then `dry_run=false`, then control-plane dispatch. Order: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder (once product telemetry exists). Dark merging stays limited to the profile's `dark_paths`; widen `factory.yml` only after five clean lit merges per path group.
+All wrappers with `dry_run=true`, then `dry_run=false`, then control-plane dispatch. Order: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder (once product telemetry exists), security triage (needs the App's code scanning, Dependabot and secret scanning alerts read permissions). Dark merging stays limited to the profile's `dark_paths`; widen `factory.yml` only after five clean lit merges per path group.
 
 ## Pause
 

@@ -8,6 +8,7 @@ import { json, safeEqual, toHex } from "./util";
 
 const enc = new TextEncoder();
 export const DEBOUNCE_MS = 5 * 60_000;
+export const SECURITY_DEBOUNCE_MS = 60 * 60_000;
 
 export async function hmacHex(secret: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -20,7 +21,7 @@ export async function verifySignature(secret: string, body: string, header: stri
 }
 
 export function isDroppedSender(event: string, payload: any): boolean {
-  if (event === "check_suite" || event === "workflow_run") return false;
+  if (event === "check_suite" || event === "workflow_run" || event === "code_scanning_alert" || event === "dependabot_alert") return false;
   return String(payload?.sender?.login ?? "").endsWith("[bot]");
 }
 
@@ -59,10 +60,17 @@ export function mapEvent(event: string, payload: any, targetRepo: string, deploy
       return [{ agent: "verifier", subject: `deploy:${w.head_sha}`, phase: "verify", issue: "", pr: "" }];
     }
   }
+  // One constant subject: the per-(agent, subject) lock and the debounce cover every alert event together.
+  if (
+    (event === "code_scanning_alert" && (action === "created" || action === "appeared_in_branch")) ||
+    (event === "dependabot_alert" && action === "created")
+  ) {
+    return [{ agent: "security-triage", subject: "security", phase: "triage", issue: "", pr: "" }];
+  }
   return [];
 }
 
-/** Pure: true when a reviewer run for the subject is in flight or finished within the window. */
+/** Pure: true when a run for the subject is in flight or finished within the window (reviewer 5 min, security-triage 60 min). */
 export function isDebounced(rows: { status: string; finished_at: string | null }[], now: Date, windowMs = DEBOUNCE_MS): boolean {
   return rows.some((r) => {
     if (r.status === "dispatched" || r.status === "started") return true;
@@ -100,6 +108,7 @@ export async function handleWebhook(req: Request, env: Env, ctx: ExecutionContex
   let failed = false;
   for (const it of intents) {
     const o: Record<string, unknown> = { agent: it.agent, subject: it.subject };
+    if (payload.alert?.number !== undefined) o.alert = payload.alert.number;
     if (await isPaused(env)) o.skipped = "paused";
     else {
       const spec = agentSpec(it.agent);
@@ -107,11 +116,11 @@ export async function handleWebhook(req: Request, env: Env, ctx: ExecutionContex
       if (q.usedToday + q.reservedInFlight + spec.maxModelCalls > dailyQuota(env)) o.skipped = "quota";
       else {
         let debounced = false;
-        if (it.agent === "reviewer") {
-          const { results } = await env.DB.prepare("SELECT status, finished_at FROM runs WHERE agent = 'reviewer' AND subject = ? ORDER BY dispatched_at DESC LIMIT 5")
-            .bind(it.subject)
+        if (it.agent === "reviewer" || it.agent === "security-triage") {
+          const { results } = await env.DB.prepare("SELECT status, finished_at FROM runs WHERE agent = ? AND subject = ? ORDER BY dispatched_at DESC LIMIT 5")
+            .bind(it.agent, it.subject)
             .all<{ status: string; finished_at: string | null }>();
-          debounced = isDebounced(results ?? [], now);
+          debounced = isDebounced(results ?? [], now, it.agent === "reviewer" ? DEBOUNCE_MS : SECURITY_DEBOUNCE_MS);
         }
         if (debounced) o.skipped = "debounced";
         else {

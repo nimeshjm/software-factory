@@ -49,6 +49,24 @@ def _write(out: Path, name: str, text: str) -> None:
     (out / name).write_text(text, encoding="utf-8")
 
 
+def _security_no_inputs(inputs: Path) -> str | None:
+    """Error text when no security feed is readable (file missing, unparseable or every feed unavailable), else None."""
+    names = ("code_scanning", "dependabot", "secret_scanning")
+    try:
+        feeds = json.loads((inputs / "security.json").read_text(encoding="utf-8"))["feeds"]
+        if not isinstance(feeds, dict):
+            raise ValueError("feeds is not an object")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return f"inputs/security.json missing or unreadable: {type(e).__name__}"
+    if any(isinstance(feeds.get(n), dict) and feeds[n].get("available") is True for n in names):
+        return None
+    parts = []
+    for n in names:
+        f = feeds.get(n) if isinstance(feeds.get(n), dict) else {}
+        parts.append(f"{n}: {f.get('status')} {f.get('message') or 'unavailable'}")
+    return "; ".join(parts)
+
+
 def run(args: argparse.Namespace) -> int:
     started = time.monotonic()
     out = Path(args.out)
@@ -72,6 +90,12 @@ def run(args: argparse.Namespace) -> int:
             result.stop_reason = "profile_invalid"
             result.error = redact(str(e))[:1000]
             return 1
+        if args.agent == "security-triage":
+            no_inputs = _security_no_inputs(inputs)
+            if no_inputs:
+                result.stop_reason = "no_inputs"
+                result.error = redact(no_inputs)[:1000]
+                return 1
         set_profile(profile)
         spec = apply_spike_model(cfg, resolve_run_spec(cfg, args.agent, args.phase), issue_labels(inputs))
         model_cls = proposal_model_for(args.agent, args.phase)

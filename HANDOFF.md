@@ -1,6 +1,6 @@
 # Handoff: software factory
 
-Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, "Do next" updated 2026-10-30 13:00 UTC. Everything below is the state at that time.
+Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-10-30 15:00 UTC (Plan B built). Everything below is the state at that time.
 
 ## Do next (Monday 2026-11-02, after 07:00 UTC)
 
@@ -11,6 +11,12 @@ The 107 dry run passed on 2026-10-30 (run 41053297498): research on `gemini-3.8-
 3. **If it fails:** the issue stays `status:in-progress`. Read `stop_reason` and compare with the 107 history below. Only two spikes' worth of flash exists per day, so a retry means the next day.
 4. **Then release 117** (`gh issue edit 117 -R nimeshjm/fantasy-football --remove-label needs-human`), the next day.
 5. **Issue 116 (remove API-Football)** is `risk:high`: it waits for `plan:approved`, its PR needs your review, and you must remove the `API_FOOTBALL_KEY` line from fantasy-football's `factory.yml` yourself.
+
+**Plan B (security-triage) is built and verified locally but not pushed or graduated.** Its roll-out, in order; steps 1 and 2 are yours:
+1. **App permissions:** at `https://github.com/settings/apps/software-factory-agent-bot/permissions` add Repository permissions Code scanning alerts: Read-only, Dependabot alerts: Read-only, Secret scanning alerts: Read-only; save; accept the new permissions on both installations (`https://github.com/settings/installations`). Do this before pushing: once the Worker is deployed, the 06:00 UTC tick dispatches `security-triage` daily, and without the permissions each run ends `stop_reason: no_inputs` and alerts Discord.
+2. **Push `main`.** CI deploys the Worker (it changes `control-plane/**`) and syncs the new `security` label. Then subscribe the target hook: `gh api -X PATCH repos/nimeshjm/fantasy-football/hooks/704460903 -f 'add_events[]=code_scanning_alert' -f 'add_events[]=dependabot_alert'`.
+3. **Dry run:** `gh workflow run security-triage.yml -R nimeshjm/software-factory -f dry_run=true`. Check `phases/triage/result.json` (`stop_reason` must be `end_turn`, not `no_inputs`) and `proposal.json` against the Security tab. Expected from the tab on 2026-10-30: one finding for `js/stack-trace-exposure` in `src/loginProbe.ts` (`risk:low size:S`, priority 2); `undici` (11 advisories, transitive via the lit `wrangler`) as one `needs-human` finding, priority 1; `sharp` (1 high, no PR) as a priority 1 finding; `@vitest/mocker` skipped if PR 88 is matched (it is a grouped PR, so it probably is not matched and will appear as a finding); no secret-scanning findings; `resolved` empty.
+4. **Live:** either `gh workflow run security-triage.yml -R nimeshjm/software-factory` or wait for the 06:00 UTC tick. Success: new issues `bug security status:backlog factory:accepted priority:N` with the `<!-- factory:security:<hash> -->` marker, at most 5. `bugs_first` then pauses the builder while a priority 1 or 2 security bug is open, so expect the bug-fixer to pick up the code-scanning issue (its first ever run; dry-run it first if you prefer: `gh workflow run bug-fixer.yml -f issue=<n> -f dry_run=true`).
 
 Observations from the dry run worth keeping:
 - Research hit the latency guard after three ESPN fetches; implement fetched the Liga Portugal site, `bootstrap-static/` and API-Football itself. That is the intended split, and the budgets held.
@@ -84,6 +90,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | builder (spikes) | in progress: see below |
 | bug-fixer | not yet run (has web research) |
 | incident responder | deferred: Honeycomb reads need Enterprise (see Known gaps) |
+| security-triage | built 2026-10-30, not yet run; needs App permissions (see Do next) |
 
 **Web research and spikes** (details in `CONTRACTS.md`, `## Web research (web_search, fetch_url) and spikes`):
 - **Tools:** the builder and the bug-fixer have `web_search` (Tavily free tier) and `fetch_url` in research and implement. fantasy-football's `web.allowed_hosts: ["*"]` allows any public https host.
@@ -117,14 +124,15 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 - **116** "Remove API-Football", `risk:high`, waits for `plan:approved`.
 - **108 to 110** awards implementation (epic 106) and **100 to 103** (epic 35) are blocked on the author gate or `risk:high`.
 
-**Verification at `cb52a4f` (2026-10-29):**
+**Verification of the Plan B working tree (2026-10-30, uncommitted at the time of writing):**
 
 | Check | Result |
 |---|---|
-| `uv run pytest -q` | 186 passed |
-| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 27 passed, clean, succeeds |
+| `uv run pytest -q` | 193 passed |
+| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 30 passed, clean, succeeds |
 | `actionlint`, `shellcheck -x scripts/*.sh`, `scripts/check-config-sync.sh` | clean |
-| CI on `main` | green on all jobs |
+| `gather-inputs.sh security` and `apply_security` with a stub `gh` | shapes, skip rules, `needs-human`, priority override, `open_pr` match and `resolved` path behave as the contract says |
+| CI on `main` (`5571786`) | green on all jobs |
 
 **Setup is complete:**
 - **GitHub App** `software-factory-agent-bot` (id 5514689), installed on both repos.
@@ -178,56 +186,17 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 
 ## Planned work
 
-Plan A (spikes and web research) shipped on 2026-10-29; `CONTRACTS.md` is the reference. Plan B below is not started. It follows the core rules: agents propose and `apply-proposal.sh` acts; new interfaces go into `CONTRACTS.md` first; the agent graduates with `dry_run=true` before the control plane dispatches it.
+Plan A (spikes and web research) shipped on 2026-10-29. Plan B (security findings become issues) was built on 2026-10-30 and waits for graduation (see Do next). `CONTRACTS.md` is the reference for both; the Plan B spec is its `## Security triage` section.
 
-### Plan B: security findings become issues (`security-triage` agent)
+### Plan B as built
 
-Problem: the target's GitHub Security tab has findings nobody turns into work. On 2026-10-28 it had:
-- one open code-scanning alert (CodeQL `js/stack-trace-exposure`, medium, `src/loginProbe.ts`);
-- about a dozen open Dependabot alerts (`undici` high, transitive via `wrangler`; `vite` and `@vitest/mocker`, already covered by Dependabot PRs 96 and 88);
-- zero secret-scanning alerts.
-
-"Security findings" means these three GitHub alert feeds.
-
-1. **App permissions** (owner, in the dashboard): add Code scanning alerts: Read, Dependabot alerts: Read and Secret scanning alerts: Read to `software-factory-agent-bot`, then accept the new permissions on both installations. Without this the gather step gets 403, and the run must stop with `stop_reason: no_inputs`, not an empty proposal.
-2. **Inputs** (`scripts/gather-inputs.sh security`, pipeline side, App token, no agent token): write `inputs/security.json` with:
-   - open code-scanning alerts: `number`, `rule.id`, `rule.severity`, `rule.security_severity_level`, `rule.description`, path, start line, message, `html_url`, `created_at`;
-   - open Dependabot alerts: `number`, package, ecosystem, severity, `ghsa_id`, vulnerable range, first patched version, manifest path, `html_url`, and `open_pr` (the open Dependabot PR bumping that package, if any);
-   - secret-scanning alerts as a count and types only, never the secret;
-   - open issues carrying a `<!-- factory:security:` marker, with their alert numbers.
-
-   Cap each list at 50.
-3. **Agent** `security-triage` in `factory.config.json`: model cheap, phase `triage`, tools `read_file`, `list_files` and `search_files`, limits as triage, `max_model_calls` 15. Prompt in `agents/security-triage/triage.md`.
-   - Proposal `SecurityProposal` (`factory/schemas/models.py`, `CONTRACTS.md`): `{findings[{source: "code_scanning"|"dependabot"|"secret_scanning", alert_number, signature, title, body, priority: 1|2|3, labels[], existing_issue|null}], resolved[{issue, alert_number, note}], summary}`.
-   - Signature: `code_scanning:<rule.id>:<path>` or `dependabot:<package>:<ghsa_id>`.
-   - Rules the prompt states and the apply script enforces:
-     - skip a Dependabot alert that has an open Dependabot PR;
-     - an alert on a package in `lit_dependencies` gets `needs-human`;
-     - secret-scanning findings are always `needs-human`, and the body never contains the secret;
-     - priority from severity: critical or high is 1, medium 2, low 3;
-     - `risk:low size:S` for a single-file code-scanning fix, else `risk:high`;
-     - `resolved` lists tracked issues whose alert is now closed.
-4. **Apply** (`apply_security`, modelled on `apply_incident`):
-   - Marker `<!-- factory:security:<sha256(signature)[:12]> -->`, deduplicated through `create_issue`.
-   - Labels `bug`, `security`, `status:backlog`, `priority:N` and `factory:accepted`, plus `needs-human` where the rules say.
-   - At most 5 new issues per run.
-   - Body: alert link, rule description, location, suggested fix, and the acceptance criterion "alert N is closed on `main`".
-   - For each `resolved` entry: comment, then move the issue to `status:done`.
-   - Add `security` to the label set and `preflight-labels.sh`.
-5. **Control plane:**
-   - Dispatch once a day in the 06:30 UTC window, and on webhook events `code_scanning_alert` (`created`, `appeared_in_branch`) and `dependabot_alert` (`created`), debounced to one run an hour.
-   - Register those events on the target webhook.
-   - Mirror the agent spec in `wrangler.jsonc` and `src/config.ts`.
-   - Add a `security-triage.yml` dispatch wrapper and an `agent-run.yml` gather step.
-6. **Pickup:** issues land as `bug status:backlog factory:accepted`, so the bug-fixer takes them. `bugs_first` pauses the builder while a priority 1 or 2 security bug is open.
-7. **Roll-out:**
-   1. Permissions.
-   2. `gh workflow run security-triage.yml -f dry_run=true`, and check the proposal against the Security tab.
-   3. Live once, then enable in the control plane.
-
-   Expected first result: one `js/stack-trace-exposure` issue (`risk:low size:S`) and one `needs-human` issue for `undici`.
-
-Risks: alert text is untrusted input; the daily run costs about 10 model calls; code-scanning alerts on branches other than `main` must be filtered out (`ref` = default branch).
+- **Agent** `security-triage` (`factory.config.json`): model `cheap`, phase `triage`, tools `read_file`, `list_files`, `search_files`, 15 model calls, triage limits. Prompt `agents/security-triage/PROMPT.md`. Proposal `SecurityProposal` (`factory/schemas/models.py`).
+- **Gather** `scripts/gather-inputs.sh security` writes `inputs/security.json`: per-feed availability, default-branch code-scanning alerts, Dependabot alerts grouped per package (with `relationship` and a matched open Dependabot PR), secret-scanning counts by type (the secret value is never read), and tracked issues with their current signature or null when the alert is gone.
+- **Harness** stops before any model call with `stop_reason: no_inputs` when no feed is readable (`factory/run.py`); the inputs reach the model inside `<untrusted source="security.json">`.
+- **Apply** `apply_security` (`scripts/apply-proposal.sh`): marker `<!-- factory:security:<hash> -->`, at most 5 new issues per run, labels `bug security status:backlog priority:N factory:accepted`, priority recomputed from the inputs, `needs-human` for secret scanning, transitive dependencies and `lit_dependencies`, skips for tracked signatures and groups with an open Dependabot PR; `resolved` entries get a comment, `status:done` and a close, only when all three feeds were readable.
+- **Control plane:** dispatched on the 06:00 UTC tick (subject `<date>`, beside the incident responder) and on `code_scanning_alert` (`created`, `appeared_in_branch`) and `dependabot_alert` (`created`), debounced to one webhook run per hour.
+- **Deviations from the original plan:** Dependabot findings are one per package, not one per advisory (eleven `undici` issues would have hit the cap); `needs-human` for transitive dependencies uses the API's `relationship` field; the signature for `resolved` entries carries the marker hash; the prompt file follows the single-phase `PROMPT.md` convention; the daily window is 06:00, not 06:30, because the tick check is hour-granular.
+- **Known gaps:** grouped Dependabot PRs (`dependabot/npm_and_yarn/vitest-<digest>`) are not matched to their alerts, so a package covered by a grouped PR still gets an issue; the bash gather and apply paths have no automated tests (validated with a stub `gh`); `secret_scanning_alert` webhooks are not subscribed.
 
 ## Claude Code tooling for working on the factory
 

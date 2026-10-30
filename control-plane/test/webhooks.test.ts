@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hmacHex, isDebounced, isDroppedSender, mapEvent, verifySignature } from "../src/webhooks";
+import { SECURITY_DEBOUNCE_MS, hmacHex, isDebounced, isDroppedSender, mapEvent, verifySignature } from "../src/webhooks";
 
 const T = "acme/widgets";
 const DEPLOY = { workflowName: "Ship it", branch: "trunk" };
@@ -19,6 +19,22 @@ describe("webhooks", () => {
     expect(isDroppedSender("check_suite", p)).toBe(false);
     expect(isDroppedSender("workflow_run", p)).toBe(false);
     expect(isDroppedSender("issues", { sender: { login: "octocat" } })).toBe(false);
+  });
+  it("exempts security alert events from the bot-sender drop", () => {
+    expect(isDroppedSender("code_scanning_alert", { sender: { login: "github[bot]" } })).toBe(false);
+    expect(isDroppedSender("dependabot_alert", { sender: { login: "dependabot[bot]" } })).toBe(false);
+  });
+  it("maps security alert events", () => {
+    const repository = { full_name: T };
+    const want = [{ agent: "security-triage", subject: "security", phase: "triage", issue: "", pr: "" }];
+    expect(mapEvent("code_scanning_alert", { action: "created", alert: { number: 1 }, repository }, T, DEPLOY)).toEqual(want);
+    expect(mapEvent("code_scanning_alert", { action: "appeared_in_branch", alert: { number: 1 }, repository }, T, DEPLOY)).toEqual(want);
+    expect(mapEvent("dependabot_alert", { action: "created", alert: { number: 2 }, repository }, T, DEPLOY)).toEqual(want);
+    expect(mapEvent("code_scanning_alert", { action: "fixed", alert: { number: 1 }, repository }, T, DEPLOY)).toEqual([]);
+    expect(mapEvent("code_scanning_alert", { action: "closed_by_user", repository }, T, DEPLOY)).toEqual([]);
+    expect(mapEvent("dependabot_alert", { action: "dismissed", alert: { number: 2 }, repository }, T, DEPLOY)).toEqual([]);
+    expect(mapEvent("dependabot_alert", { action: "appeared_in_branch", repository }, T, DEPLOY)).toEqual([]);
+    expect(mapEvent("dependabot_alert", { action: "created", repository: { full_name: "x/y" } }, T, DEPLOY)).toEqual([]);
   });
   it("maps events", () => {
     const repository = { full_name: T };
@@ -55,5 +71,14 @@ describe("webhooks", () => {
     expect(isDebounced([{ status: "success", finished_at: "2026-10-21T09:57:00Z" }], now)).toBe(true);
     expect(isDebounced([{ status: "success", finished_at: "2026-10-21T09:50:00Z" }], now)).toBe(false);
     expect(isDebounced([], now)).toBe(false);
+  });
+  it("debounces security-triage to one run per 60 minutes", () => {
+    const now = new Date("2026-10-21T10:00:00Z");
+    const w = SECURITY_DEBOUNCE_MS;
+    expect(w).toBe(3_600_000);
+    expect(isDebounced([{ status: "started", finished_at: null }], now, w)).toBe(true);
+    expect(isDebounced([{ status: "success", finished_at: "2026-10-21T09:30:00Z" }], now, w)).toBe(true);
+    expect(isDebounced([{ status: "success", finished_at: "2026-10-21T08:59:00Z" }], now, w)).toBe(false);
+    expect(isDebounced([{ status: "success", finished_at: "2026-10-21T09:30:00Z" }], now)).toBe(false);
   });
 });

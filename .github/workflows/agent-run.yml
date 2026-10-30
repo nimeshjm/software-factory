@@ -17,7 +17,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-24.04  # ubuntu-latest is 26.04, which Playwright does not support yet
-    timeout-minutes: ${{ fromJSON('{"triage":15,"builder":70,"bug-fixer":70,"reviewer":25,"verifier":20,"incident-responder":25}')[inputs.agent] }}
+    timeout-minutes: ${{ fromJSON('{"triage":15,"builder":70,"bug-fixer":70,"reviewer":25,"verifier":20,"incident-responder":25,"security-triage":15}')[inputs.agent] }}
     concurrency:
       group: ${{ inputs.agent }}-${{ inputs.issue }}${{ inputs.pr }}
       cancel-in-progress: false
@@ -214,6 +214,13 @@ jobs:
           TARGET_BASE_URL: ${{ vars.TARGET_BASE_URL }}
           SMOKE_AUTH_TOKEN: ${{ secrets.SMOKE_AUTH_TOKEN }}
         run: scripts/gather-inputs.sh verify
+
+      - name: Gather inputs (security)
+        if: ${{ inputs.agent == 'security-triage' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          AGENT: ${{ inputs.agent }}
+        run: scripts/gather-inputs.sh security
 
       - name: Gather inputs (honeycomb)
         if: ${{ inputs.agent == 'verifier' || inputs.agent == 'incident-responder' }}

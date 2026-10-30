@@ -396,6 +396,84 @@ apply_incident() {
   done
 }
 
+# ---------------------------------------------------------------- security triage
+# sev_priority <severity>: critical|high -> 1, medium -> 2, anything else -> 3
+sev_priority() { case "$1" in critical|high) printf 1 ;; medium) printf 2 ;; *) printf 3 ;; esac; }
+
+apply_security() {
+  local f sec; f="$(proposal_path triage)"; validate_and_guard triage "$f"
+  sec="$INPUTS_DIR/security.json"
+  [ -s "$sec" ] || die "security-triage apply needs $sec"
+  local count i new_count=0 finding sig source existing kind entry sev prio agent_prio rel pkg pat hash marker title lbls needs_human
+  count="$(jq '.findings | length' "$f")"
+  for ((i = 0; i < count; i++)); do
+    finding="$(jq -c ".findings[$i]" "$f")"
+    existing="$(jq -r '.existing_issue // empty' <<<"$finding")"
+    sig="$(jq -r '.signature' <<<"$finding")"
+    if [ -n "$existing" ]; then log "security finding $i ($sig) already tracked by #$existing"; continue; fi
+    if jq -e --arg s "$sig" 'any(.tracked_issues[]; .signature == $s)' "$sec" >/dev/null; then
+      log "security finding $i ($sig) already has an open issue"; continue
+    fi
+    # The inputs are the source of truth for kind, severity and relationship, not the agent.
+    entry="$(jq -c --arg s "$sig" '
+      ((.code_scanning[] | select(.signature == $s)) | {kind: "code_scanning", severity: .security_severity}) //
+      ((.dependabot[] | select(.signature == $s)) | {kind: "dependabot", severity: .max_severity, relationship, package, open_pr}) //
+      ((.secret_scanning.types[] | select(.signature == $s)) | {kind: "secret_scanning", severity: "high"}) // empty' "$sec" | head -n1)"
+    [ -n "$entry" ] || die "security finding $i: signature '$sig' is not in $sec"
+    kind="$(jq -r '.kind' <<<"$entry")"
+    source="$(jq -r '.source' <<<"$finding")"
+    if [ "$source" != "$kind" ]; then warn "security finding $i: source '$source' differs from the inputs ('$kind'); using '$kind'"; fi
+    if [ "$kind" = dependabot ] && [ -n "$(jq -r '.open_pr // empty' <<<"$entry")" ]; then
+      log "security finding $i ($sig) has open Dependabot PR #$(jq -r '.open_pr' <<<"$entry")"; continue
+    fi
+    if [ "$new_count" -ge 5 ]; then log "security: 5 new issues this run; leaving $sig for the next run"; continue; fi
+    new_count=$((new_count + 1))
+
+    sev="$(jq -r '.severity // ""' <<<"$entry")"
+    if [ "$kind" = secret_scanning ]; then prio=1; else prio="$(sev_priority "$sev")"; fi
+    agent_prio="$(jq -r '.priority' <<<"$finding")"
+    if [ "$agent_prio" != "$prio" ]; then warn "security finding $i: priority $agent_prio overridden to $prio (severity '${sev:-none}')"; fi
+
+    needs_human=false
+    if [ "$kind" = secret_scanning ]; then needs_human=true; fi
+    if [ "$kind" = dependabot ]; then
+      rel="$(jq -r '.relationship' <<<"$entry")"; pkg="$(jq -r '.package' <<<"$entry")"
+      if [ "$rel" != direct ]; then needs_human=true; fi
+      while IFS= read -r pat; do
+        [ -n "$pat" ] || continue
+        # shellcheck disable=SC2254
+        case "$pkg" in $pat) needs_human=true ;; *) ;; esac
+      done < <(jq -r '.lit_dependencies[]?' "$INPUTS_DIR/factory.json")
+    fi
+
+    lbls="$(jq -c --argjson nh "$needs_human" --arg p "$prio" \
+      '.labels + ["bug", "security", "status:backlog", "priority:\($p)"] + (if $nh then ["needs-human"] else [] end)' <<<"$finding" | filter_labels | csv)"
+    case ",$lbls," in *,risk:*) ;; *) lbls="${lbls:+$lbls,}risk:high" ;; esac
+    lbls="${lbls:+$lbls,}factory:accepted"
+
+    hash="$(printf '%s' "$sig" | sha256sum | cut -c1-12)"
+    marker="<!-- factory:security:$hash -->"
+    title="$(jq -r '.title' <<<"$finding")"
+    { printf '%s\n' "$marker"; jq -r '.body' <<<"$finding"; printf '\n---\n_Factory run %s_\n' "$RUN_ID"; } | sanitize >"$TMP/sec.md"
+    create_issue "$title" "$TMP/sec.md" "$lbls" "$marker" >/dev/null
+  done
+
+  local rcount num note
+  rcount="$(jq '.resolved | length' "$f")"
+  for ((i = 0; i < rcount; i++)); do
+    num="$(jq -r ".resolved[$i].issue" "$f")"
+    if ! jq -e --argjson n "$num" 'any(.tracked_issues[]; .number == $n and .signature == null and ((.labels | index("status:done")) | not))' "$sec" >/dev/null; then
+      log "security resolved #$num: not a tracked issue with a closed alert; skipped"; continue
+    fi
+    note="$(jq -r ".resolved[$i].note" "$f")"
+    { printf '%s\n' '<!-- factory:security:resolved -->'; printf '%s\n' "$note"; printf '\n---\n_Factory run %s_\n' "$RUN_ID"; } | sanitize >"$TMP/res.md"
+    upsert_comment "$num" '<!-- factory:security:resolved -->' "$TMP/res.md"
+    edit_labels issue "$num" "status:done" "status:backlog,status:plan-review,status:in-progress,status:in-review"
+    gh issue close "$num" --repo "$TARGET_REPO" --reason completed >/dev/null
+    log "security issue #$num resolved and closed"
+  done
+}
+
 # ---------------------------------------------------------------- dispatch
 if [ "$MODE" = "--auto" ]; then
   phases=()
@@ -414,6 +492,7 @@ for phase in "${phases[@]}"; do
     reviewer:review) apply_review ;;
     verifier:verify) apply_verify ;;
     incident-responder:respond) apply_incident ;;
+    security-triage:triage) apply_security ;;
     *) die "no apply handler for $AGENT:$phase" ;;
   esac
 done

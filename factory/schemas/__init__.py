@@ -22,6 +22,9 @@ from .models import (
     ResearchArtifact,
     ReviewProposal,
     RunResult,
+    SecurityFinding,
+    SecurityProposal,
+    SecurityResolved,
     ToolCall,
     TriageProposal,
     Usage,
@@ -40,6 +43,7 @@ _PHASE_MODELS: dict[tuple[str, str | None], type[BaseModel]] = {
     ("reviewer", None): ReviewProposal,
     ("verifier", None): VerifyProposal,
     ("incident-responder", None): IncidentProposal,
+    ("security-triage", None): SecurityProposal,
 }
 
 ALL_MODELS: dict[str, type[BaseModel]] = {
@@ -52,6 +56,7 @@ ALL_MODELS: dict[str, type[BaseModel]] = {
         ReviewProposal,
         VerifyProposal,
         IncidentProposal,
+        SecurityProposal,
         RunResult,
         TargetProfile,
     )
@@ -140,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
 
 __all__ = [
     "ALL_MODELS", "AgentCheck", "BuildProposal", "CiFix", "GuardEvent", "ToolCall", "Incident", "IncidentProposal",
-    "InlineComment", "PlanArtifact", "ResearchArtifact", "ReviewProposal", "RunResult", "TargetProfile", "TriageProposal",
+    "InlineComment", "PlanArtifact", "ResearchArtifact", "ReviewProposal", "RunResult", "SecurityFinding", "SecurityProposal", "SecurityResolved", "TargetProfile",
+    "TriageProposal",
     "Usage", "VerifyBug", "VerifyProposal", "dump_schemas", "proposal_model_for",
 ]

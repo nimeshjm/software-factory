@@ -125,6 +125,32 @@ class IncidentProposal(_Base):
     summary: str
 
 
+# --- security triage ---------------------------------------------------------
+class SecurityFinding(_Base):
+    source: Literal["code_scanning", "dependabot", "secret_scanning"]
+    signature: str
+    alert_numbers: list[int]
+    title: str
+    body: str
+    priority: Literal[1, 2, 3]
+    labels: list[str] = Field(default_factory=list)
+    existing_issue: int | None = None
+
+
+class SecurityResolved(_Base):
+    issue: int
+    signature: str
+    note: str
+
+
+class SecurityProposal(_Base):
+    """Security triage result: one finding per alert signature, plus tracked issues whose alert is gone."""
+
+    findings: list[SecurityFinding] = Field(default_factory=list)
+    resolved: list[SecurityResolved] = Field(default_factory=list)
+    summary: str
+
+
 # --- run result ------------------------------------------------------------
 class Usage(_Base):
     input_tokens: int = 0
