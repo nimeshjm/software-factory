@@ -1,26 +1,22 @@
 # Handoff: software factory
 
-Written 2026-10-28, rewritten 2026-10-29 22:45 UTC. Everything below is the state at that time.
+Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, "Do next" updated 2026-10-30 13:00 UTC. Everything below is the state at that time.
 
-## Do next (2026-10-30, after 07:00 UTC)
+## Do next (Monday 2026-11-02, after 07:00 UTC)
 
-The Gemini flash quotas reset at midnight Pacific (07:00 UTC). Issue 107's live run failed on tokens on 2026-10-29 and the fix (`cb52a4f`) is untested. In order:
+The 107 dry run passed on 2026-10-30 (run 41053297498): research on `gemini-3.8-flash`, 22 calls, 366k tokens; implement on `gemini-3.5-flash-lite`, 9 calls, 185k tokens; `check-findings` ok; every field and status in `findings_md` verified by hand against the live endpoints. The live run was held because the dry run spent the day's 3.8-flash quota and a failure would have left no flash for a retry. Run it first thing on a fresh day:
 
-1. **Dry-run the spike on 107:** `gh workflow run builder.yml -f issue=107 -f dry_run=true`. 107 is at `status:in-progress`; a manual dispatch ignores labels.
-2. **Check the run.**
-   - Step log: `[tool]` lines, and any `[model] ... switching to ...` lines.
-   - Per phase in the artifact (`gh run download <id>`): `phases/<phase>/result.json` for `model_ids_used`, `model_calls` and `usage.total_tokens`. Expected: research on `gemini-3.8-flash` with at most 25 calls; implement on `gemini-3.5-flash-lite` with at most 15 calls and under 300k tokens, fetching little or nothing.
-   - Claim check: `uv run python -m factory.policy check-findings --proposal <dir>/phases/implement/proposal.json --results <dir>/phases/research/result.json <dir>/phases/implement/result.json` must print `"ok": true`.
-   - Read `findings_md` by hand:
-     - It names `elements[].stats.in_dreamteam` (fantasy `event/<n>/live/`) and `events[].top_element_info` (`bootstrap-static/`).
-     - ESPN is checked on the `summary` of a finished `por.1` match.
-     - API-Football is reported as 403 without a key.
-     - No unsourced claims.
-   - Honeycomb: environment and dataset `software-factory`, filter `factory.run_id = gh-<run id>-1`, break down by `factory.phase` and `gen_ai.request.model`.
-3. **If good:** `gh issue edit 107 -R nimeshjm/fantasy-football --remove-label status:in-progress --add-label status:backlog`. The cron runs it live within 15 minutes. Success: a `<!-- factory:findings -->` comment ending in the pipeline's `## Evidence` list, `status:done`, and the issue closed. This is the first live use of the spike apply branch against GitHub.
-4. **Then release 117:** `gh issue edit 117 -R nimeshjm/fantasy-football --remove-label needs-human`. Only one spike a day fits the flash budget comfortably, so do this after 107 is done, or the next day.
-5. **If the dry run is bad:** compare against the history below. The levers are the spike prompts (`agents/builder/{research,plan,implement}.md`, the spike bullets), `models.spike_research` / `models.spike` in `factory.config.json`, and the `research` token limit.
-6. **Issue 116 (remove API-Football)** is `risk:high`, so the builder waits for `plan:approved`, and its PR needs your review. Also remove the `API_FOOTBALL_KEY` line from fantasy-football's `factory.yml` yourself; agents cannot edit that file.
+1. **Release 107:** `gh issue edit 107 -R nimeshjm/fantasy-football --remove-label status:in-progress --add-label status:backlog`. The cron runs it live within 15 minutes. This is the first live use of the spike apply branch against GitHub.
+2. **Check the live run** the same way as the dry run: `[tool]` and `[model]` lines in the step log; `phases/<phase>/result.json` for `model_ids_used`, `model_calls`, `usage.total_tokens`; `check-findings` on the artifact; Honeycomb filter `factory.run_id = gh-<run id>-1`. Success: a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed.
+3. **If it fails:** the issue stays `status:in-progress`. Read `stop_reason` and compare with the 107 history below. Only two spikes' worth of flash exists per day, so a retry means the next day.
+4. **Then release 117** (`gh issue edit 117 -R nimeshjm/fantasy-football --remove-label needs-human`), the next day.
+5. **Issue 116 (remove API-Football)** is `risk:high`: it waits for `plan:approved`, its PR needs your review, and you must remove the `API_FOOTBALL_KEY` line from fantasy-football's `factory.yml` yourself.
+
+Observations from the dry run worth keeping:
+- Research hit the latency guard after three ESPN fetches; implement fetched the Liga Portugal site, `bootstrap-static/` and API-Football itself. That is the intended split, and the budgets held.
+- `bootstrap-static/` carries `elements[].in_dreamteam` directly, so `event/<n>/live/` was never fetched. Fine for 107's criteria.
+- 3.8-flash accepted 24 requests in one day against the documented 20, so the per-model limits are approximate.
+- Honeycomb's `gen_ai.usage.input_tokens` sum for research (1.05M) is about three times `result.json` (366k). The harness limit is enforced on the smaller number; the two count differently and nobody has reconciled them yet.
 
 ## What this is
 
@@ -113,9 +109,10 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | 40916924033 | flash-lite ignored fields the tool showed it | a stronger spike model |
 | 40951538447 | good dry run (implement on flash, 27 calls, 533k tokens) | none needed |
 | 40958393669 (live) | implement re-fetched research's sources, called `retrieve_context` 8 times, wandered off target, stopped at 918k tokens | the `cb52a4f` model swap |
+| 41053297498 (dry, 2026-10-30) | good: 3.8-flash research 22 calls, flash-lite implement 9 calls, findings verified by hand | none needed; live run held for Monday |
 
 **Open issues on fantasy-football:**
-- **107** spike, `status:in-progress`, nothing posted. See Do next.
+- **107** spike, `status:in-progress`, nothing posted. Dry run passed on 2026-10-30; release Monday. See Do next.
 - **117** "Spike other football API providers", `spike risk:low`, held with `needs-human`.
 - **116** "Remove API-Football", `risk:high`, waits for `plan:approved`.
 - **108 to 110** awards implementation (epic 106) and **100 to 103** (epic 35) are blocked on the author gate or `risk:high`.
