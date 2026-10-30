@@ -1,6 +1,6 @@
 # Handoff: software factory
 
-Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-10-30 15:00 UTC (Plan B built). Everything below is the state at that time.
+Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-10-30 15:45 UTC (Plan B built, dry run passed). Everything below is the state at that time.
 
 ## Do next (Monday 2026-11-02, after 07:00 UTC)
 
@@ -15,7 +15,7 @@ The 107 dry run passed on 2026-10-30 (run 41053297498): research on `gemini-3.8-
 **Plan B (security-triage) is built and verified locally but not pushed or graduated.** Its roll-out, in order; steps 1 and 2 are yours:
 1. **App permissions:** at `https://github.com/settings/apps/software-factory-agent-bot/permissions` add Repository permissions Code scanning alerts: Read-only, Dependabot alerts: Read-only, Secret scanning alerts: Read-only; save; accept the new permissions on both installations (`https://github.com/settings/installations`). Do this before pushing: once the Worker is deployed, the 06:00 UTC tick dispatches `security-triage` daily, and without the permissions each run ends `stop_reason: no_inputs` and alerts Discord.
 2. **Push `main`.** CI deploys the Worker (it changes `control-plane/**`) and syncs the new `security` label. Then subscribe the target hook: `gh api -X PATCH repos/nimeshjm/fantasy-football/hooks/704460903 -f 'add_events[]=code_scanning_alert' -f 'add_events[]=dependabot_alert'`.
-3. **Dry run:** `gh workflow run security-triage.yml -R nimeshjm/software-factory -f dry_run=true`. Check `phases/triage/result.json` (`stop_reason` must be `end_turn`, not `no_inputs`) and `proposal.json` against the Security tab. Expected from the tab on 2026-10-30: one finding for `js/stack-trace-exposure` in `src/loginProbe.ts` (`risk:low size:S`, priority 2); `undici` (11 advisories, transitive via the lit `wrangler`) as one `needs-human` finding, priority 1; `sharp` (1 high, no PR) as a priority 1 finding; `@vitest/mocker` skipped if PR 88 is matched (it is a grouped PR, so it probably is not matched and will appear as a finding); no secret-scanning findings; `resolved` empty.
+3. **Dry run:** done 2026-10-30 15:36 UTC (run 41082170356): all three feeds readable, one flash-lite call, 18.6k tokens, four findings matching the expectation below (`@vitest/mocker` did appear, as predicted). Bodies came back with literal `\n`; the schema now unescapes that. Re-check with `gh workflow run security-triage.yml -R nimeshjm/software-factory -f dry_run=true` after the fix is pushed, or go straight to live. Expected from the tab on 2026-10-30: one finding for `js/stack-trace-exposure` in `src/loginProbe.ts` (`risk:low size:S`, priority 2); `undici` (11 advisories, transitive via the lit `wrangler`) as one `needs-human` finding, priority 1; `sharp` (1 high, no PR) as a priority 1 finding; `@vitest/mocker` skipped if PR 88 is matched (it is a grouped PR, so it probably is not matched and will appear as a finding); no secret-scanning findings; `resolved` empty.
 4. **Live:** either `gh workflow run security-triage.yml -R nimeshjm/software-factory` or wait for the 06:00 UTC tick. Success: new issues `bug security status:backlog factory:accepted priority:N` with the `<!-- factory:security:<hash> -->` marker, at most 5. `bugs_first` then pauses the builder while a priority 1 or 2 security bug is open, so expect the bug-fixer to pick up the code-scanning issue (its first ever run; dry-run it first if you prefer: `gh workflow run bug-fixer.yml -f issue=<n> -f dry_run=true`).
 
 Observations from the dry run worth keeping:
@@ -90,7 +90,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | builder (spikes) | in progress: see below |
 | bug-fixer | not yet run (has web research) |
 | incident responder | deferred: Honeycomb reads need Enterprise (see Known gaps) |
-| security-triage | built 2026-10-30, not yet run; needs App permissions (see Do next) |
+| security-triage | dry run passed 2026-10-30 (run 41082170356); live run pending (see Do next) |
 
 **Web research and spikes** (details in `CONTRACTS.md`, `## Web research (web_search, fetch_url) and spikes`):
 - **Tools:** the builder and the bug-fixer have `web_search` (Tavily free tier) and `fetch_url` in research and implement. fantasy-football's `web.allowed_hosts: ["*"]` allows any public https host.

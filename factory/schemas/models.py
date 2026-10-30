@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class _Base(BaseModel):
@@ -135,6 +135,14 @@ class SecurityFinding(_Base):
     priority: Literal[1, 2, 3]
     labels: list[str] = Field(default_factory=list)
     existing_issue: int | None = None
+
+    @field_validator("body")
+    @classmethod
+    def _real_newlines(cls, v: str) -> str:
+        """flash-lite sometimes writes the two characters backslash-n instead of a line break; unescape when the body has no real newline."""
+        if "\n" not in v and "\\n" in v:
+            v = v.replace("\\n", "\n")
+        return v
 
 
 class SecurityResolved(_Base):

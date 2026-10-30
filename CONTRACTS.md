@@ -46,7 +46,7 @@ Exit 0 only on success. Always writes `out/result.json`.
 - reviewer `ReviewProposal`: `{verdict: "approve"|"request_changes"|"comment"|"needs_human", agent_checks[{name, status: "pass"|"fail"|"na", detail}], questions_for_human[], inline_comments[{path, line, body}], summary_md, ci_fix{attempted: bool, commit_message|null}}`
 - verifier `VerifyProposal`: `{outcome: "pass"|"fail"|"skipped", evidence_md, bug{title, body, labels[]}|null, pr_comment|null}`
 - incident-responder `IncidentProposal`: `{incidents[{signature, title, body, priority: 1|2|3, labels[], existing_issue|null}], summary}`
-- security-triage `SecurityProposal`: `{findings[{source: "code_scanning"|"dependabot"|"secret_scanning", signature, alert_numbers[int], title, body, priority: 1|2|3, labels[], existing_issue|null}], resolved[{issue: int, signature, note}], summary}`. `signature` and `alert_numbers` are copied from `inputs/security.json`, never invented (see Security triage).
+- security-triage `SecurityProposal`: `{findings[{source: "code_scanning"|"dependabot"|"secret_scanning", signature, alert_numbers[int], title, body, priority: 1|2|3, labels[], existing_issue|null}], resolved[{issue: int, signature, note}], summary}`. `signature` and `alert_numbers` are copied from `inputs/security.json`, never invented (see Security triage). A `body` with no real newline but the two-character sequence `\n` is unescaped by the schema (flash-lite does this).
 
 ## Branch and title conventions
 - builder: `feat/<N>-<slug>`; bug-fixer: `fix/<N>-<slug>`; `[ci-fix]` commits by reviewer post-step only.

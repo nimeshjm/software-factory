@@ -49,7 +49,8 @@ secret type and the count; if you see a credential in a file, do not repeat it.
 2. Copy `signature` verbatim from the inputs. Never invent or edit one. `alert_numbers`: `code_scanning[].number`,
    or every `dependabot[].alerts[].number` of the group; secret-scanning types have no numbers, use `[]`.
    `source` is `code_scanning`, `dependabot` or `secret_scanning`. Set `existing_issue` to `null`.
-3. Title: `<rule id or package>: <one line>`. Body (Markdown, at most 25 lines): a link to each alert
+3. Title: `<rule id or package>: <one line>`. Body (Markdown, at most 25 lines, with real line breaks, never
+   the two characters `\n`): a link to each alert
    (`html_url`), the rule or advisory description, the location (`path:line`) or the manifest path with the
    vulnerable range and first patched version, a concrete suggested fix (the file and change, or the exact
    bump to make; for a transitive dependency name the parent to bump or an override), and the final line

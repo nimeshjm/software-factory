@@ -115,3 +115,14 @@ def test_no_inputs_when_all_feeds_unavailable(tmp_path, ws, monkeypatch):
                  "dependabot: 403 Resource not accessible by integration",
                  "secret_scanning: 404 Secret scanning is disabled."):
         assert feed in res["error"]
+
+
+def test_body_literal_backslash_n_is_unescaped():
+    from factory.schemas.models import SecurityFinding
+
+    base = dict(source="code_scanning", signature="code_scanning:r:p", alert_numbers=[1], title="t", priority=2)
+    f = SecurityFinding(body="line one\\nline two", **base)
+    assert f.body == "line one\nline two"
+    # a body that already has real newlines is left alone, even if it mentions the escape
+    f2 = SecurityFinding(body="real\nnewline and literal \\n kept", **base)
+    assert f2.body == "real\nnewline and literal \\n kept"
