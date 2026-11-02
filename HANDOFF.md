@@ -1,24 +1,30 @@
 # Handoff: software factory
 
-Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-10-30 15:45 UTC (Plan B built, dry run passed). Everything below is the state at that time.
+Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-02 15:50 UTC (security-triage live, two problems found). Everything below is the state at that time.
 
-## Do next (Monday 2026-11-02, after 07:00 UTC)
+## Do next (checked 2026-11-02 15:50 UTC)
 
-The 107 dry run passed on 2026-10-30 (run 41053297498): research on `gemini-3.8-flash`, 22 calls, 366k tokens; implement on `gemini-3.5-flash-lite`, 9 calls, 185k tokens; `check-findings` ok; every field and status in `findings_md` verified by hand against the live endpoints. The live run was held because the dry run spent the day's 3.8-flash quota and a failure would have left no flash for a retry. Run it first thing on a fresh day:
+**State on Monday afternoon.** Security-triage is live and ran on its own at 06:00 UTC on 2026-10-31, 11-01 and 11-02 (runs 41174823542, 41279077141, 41397294396), one flash-lite call each. The first run created issues 118 to 121 on fantasy-football; the next two recognised all four alerts as tracked and proposed nothing, so dedup works. Issue 107 is still `status:in-progress`, untouched; flash quota is fresh (no builder run since Friday's dry run). Two problems block the plan below, so fix them first.
 
-1. **Release 107:** `gh issue edit 107 -R nimeshjm/fantasy-football --remove-label status:in-progress --add-label status:backlog`. The cron runs it live within 15 minutes. This is the first live use of the spike apply branch against GitHub.
-2. **Check the live run** the same way as the dry run: `[tool]` and `[model]` lines in the step log; `phases/<phase>/result.json` for `model_ids_used`, `model_calls`, `usage.total_tokens`; `check-findings` on the artifact; Honeycomb filter `factory.run_id = gh-<run id>-1`. Success: a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed.
+**Problem 1: the security bugs pause the builder.** The control plane's tick reports `skip builder bugs_first`: `preflight.ts` (around line 218, `urgentBug`) pauses features whenever any open `bug` carries `priority:1` or `priority:2`, and it does not exclude `needs-human`. All four security issues are `needs-human`, and the three transitive-dependency ones (119 `sharp`, 120 `undici`, 121 `@vitest/mocker`) stay open until a human acts, so the builder is blocked indefinitely. Releasing 107 does nothing until this is fixed.
+- Fix: `urgentBug` ignores issues labelled `needs-human` (a bug waiting on a human should not block agent work). Add a test in `control-plane/test/preflight.test.ts` next to the existing `bugs_first` case (line ~54), update the `bugs_first` sentence in `control-plane/README.md` (line ~102) and the `**Pickup**` line of `CONTRACTS.md` `## Security triage`. Push `main`: CI deploys the Worker.
+
+**Problem 2: issue 118 has the wrong labels.** The code-scanning fix (`js/stack-trace-exposure`, `src/loginProbe.ts:73`) should be `risk:low size:S`, no `needs-human`, as the dry run produced. The live run gave it `risk:high size:S needs-human`. The apply script adds `needs-human` only for secret scanning and non-direct dependencies, so flash-lite put it there itself; the artifact (1-day retention) is gone and the apply step's stderr did not reach the Actions log, so the live proposal cannot be shown.
+- Fix in code: `apply_security` strips `needs-human` from `code_scanning` findings (the rules never allow it there); risk stays the agent's call. Record it in `CONTRACTS.md` `## Security triage`, Apply step 2.
+- Fix on the issue: `gh issue edit 118 -R nimeshjm/fantasy-football --remove-label needs-human,risk:high --add-label risk:low`. Once 118 is `risk:low` without `needs-human`, the bug-fixer takes it within 15 minutes: its first ever run, live. To see it first: `gh workflow run bug-fixer.yml -R nimeshjm/software-factory -f issue=118 -f dry_run=true` before relabelling, and check its proposal (a `fix/118-...` branch touching only `src/loginProbe.ts`). While 118 is open and `priority:2`, `bugs_first` (even after the fix) pauses the builder, so order matters: either release 107 before relabelling 118, or accept that 107 waits for the bug-fixer.
+- Also worth fixing while there: `log` lines from `apply-proposal.sh` go to stderr but did not show in the run log, so a live apply leaves no trace of its decisions except the created issues. Check how the apply step captures stderr in `agent-run.yml`.
+
+**Then the plan as before:**
+1. **Release 107:** `gh issue edit 107 -R nimeshjm/fantasy-football --remove-label status:in-progress --add-label status:backlog`. The cron runs it live within 15 minutes (only once `bugs_first` no longer skips the builder; check `/status` `last_tick.decisions`). First live use of the spike apply branch against GitHub.
+2. **Check the live run** the same way as the dry run: `[tool]` and `[model]` lines in the step log; `phases/<phase>/result.json` for `model_ids_used`, `model_calls`, `usage.total_tokens`; `check-findings` on the artifact; Honeycomb filter `factory.run_id = gh-<run id>-1`. Success: a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed. The 107 dry run (41053297498, 2026-10-30) passed: research on `gemini-3.8-flash`, 22 calls, 366k tokens; implement on `gemini-3.5-flash-lite`, 9 calls, 185k tokens; findings verified by hand.
 3. **If it fails:** the issue stays `status:in-progress`. Read `stop_reason` and compare with the 107 history below. Only two spikes' worth of flash exists per day, so a retry means the next day.
 4. **Then release 117** (`gh issue edit 117 -R nimeshjm/fantasy-football --remove-label needs-human`), the next day.
 5. **Issue 116 (remove API-Football)** is `risk:high`: it waits for `plan:approved`, its PR needs your review, and you must remove the `API_FOOTBALL_KEY` line from fantasy-football's `factory.yml` yourself.
+6. **The three `needs-human` security issues** (119, 120, 121) are yours: `undici` and `@vitest/mocker` are transitive via `wrangler` and `vitest`, so the fix is the Dependabot bumps (PRs 112 and 88, both lit, waiting for your `APPROVED` review); `sharp` has no Dependabot PR. When an alert closes on `main`, the next 06:00 run comments on its issue, sets `status:done` and closes it.
 
-**Plan B (security-triage) is built and verified locally but not pushed or graduated.** Its roll-out, in order; steps 1 and 2 are yours:
-1. **App permissions:** at `https://github.com/settings/apps/software-factory-agent-bot/permissions` add Repository permissions Code scanning alerts: Read-only, Dependabot alerts: Read-only, Secret scanning alerts: Read-only; save; accept the new permissions on both installations (`https://github.com/settings/installations`). Do this before pushing: once the Worker is deployed, the 06:00 UTC tick dispatches `security-triage` daily, and without the permissions each run ends `stop_reason: no_inputs` and alerts Discord.
-2. **Push `main`.** CI deploys the Worker (it changes `control-plane/**`) and syncs the new `security` label. Then subscribe the target hook: `gh api -X PATCH repos/nimeshjm/fantasy-football/hooks/704460903 -f 'add_events[]=code_scanning_alert' -f 'add_events[]=dependabot_alert'`.
-3. **Dry run:** done 2026-10-30 15:36 UTC (run 41082170356): all three feeds readable, one flash-lite call, 18.6k tokens, four findings matching the expectation below (`@vitest/mocker` did appear, as predicted). Bodies came back with literal `\n`; the schema now unescapes that. Re-check with `gh workflow run security-triage.yml -R nimeshjm/software-factory -f dry_run=true` after the fix is pushed, or go straight to live. Expected from the tab on 2026-10-30: one finding for `js/stack-trace-exposure` in `src/loginProbe.ts` (`risk:low size:S`, priority 2); `undici` (11 advisories, transitive via the lit `wrangler`) as one `needs-human` finding, priority 1; `sharp` (1 high, no PR) as a priority 1 finding; `@vitest/mocker` skipped if PR 88 is matched (it is a grouped PR, so it probably is not matched and will appear as a finding); no secret-scanning findings; `resolved` empty.
-4. **Live:** either `gh workflow run security-triage.yml -R nimeshjm/software-factory` or wait for the 06:00 UTC tick. Success: new issues `bug security status:backlog factory:accepted priority:N` with the `<!-- factory:security:<hash> -->` marker, at most 5. `bugs_first` then pauses the builder while a priority 1 or 2 security bug is open, so expect the bug-fixer to pick up the code-scanning issue (its first ever run; dry-run it first if you prefer: `gh workflow run bug-fixer.yml -f issue=<n> -f dry_run=true`).
+**Plan B roll-out record** (all done 2026-10-30): App permissions added and accepted; pushed as `bbcc1d4`, Worker deployed, `security` label synced; target hook 704460903 subscribed to `code_scanning_alert` and `dependabot_alert`; dry run 41082170356 passed (all three feeds readable, four findings as predicted, bodies had literal `\n`, fixed in `012cf7c` by a schema validator and a prompt line); first live run 2026-10-31 06:00 UTC created 118 to 121.
 
-Observations from the dry run worth keeping:
+Observations from the 107 dry run worth keeping:
 - Research hit the latency guard after three ESPN fetches; implement fetched the Liga Portugal site, `bootstrap-static/` and API-Football itself. That is the intended split, and the budgets held.
 - `bootstrap-static/` carries `elements[].in_dreamteam` directly, so `event/<n>/live/` was never fetched. Fine for 107's criteria.
 - 3.8-flash accepted 24 requests in one day against the documented 20, so the per-model limits are approximate.
@@ -90,7 +96,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | builder (spikes) | in progress: see below |
 | bug-fixer | not yet run (has web research) |
 | incident responder | deferred: Honeycomb reads need Enterprise (see Known gaps) |
-| security-triage | dry run passed 2026-10-30 (run 41082170356); live run pending (see Do next) |
+| security-triage | live: daily at 06:00 UTC since 2026-10-31; created issues 118 to 121; two follow-ups open (see Do next) |
 
 **Web research and spikes** (details in `CONTRACTS.md`, `## Web research (web_search, fetch_url) and spikes`):
 - **Tools:** the builder and the bug-fixer have `web_search` (Tavily free tier) and `fetch_url` in research and implement. fantasy-football's `web.allowed_hosts: ["*"]` allows any public https host.
@@ -119,7 +125,8 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | 41053297498 (dry, 2026-10-30) | good: 3.8-flash research 22 calls, flash-lite implement 9 calls, findings verified by hand | none needed; live run held for Monday |
 
 **Open issues on fantasy-football:**
-- **107** spike, `status:in-progress`, nothing posted. Dry run passed on 2026-10-30; release Monday. See Do next.
+- **107** spike, `status:in-progress`, nothing posted. Dry run passed on 2026-10-30; release once `bugs_first` is fixed. See Do next.
+- **118 to 121** security bugs from security-triage, all `needs-human` (118 wrongly so). See Do next.
 - **117** "Spike other football API providers", `spike risk:low`, held with `needs-human`.
 - **116** "Remove API-Football", `risk:high`, waits for `plan:approved`.
 - **108 to 110** awards implementation (epic 106) and **100 to 103** (epic 35) are blocked on the author gate or `risk:high`.
