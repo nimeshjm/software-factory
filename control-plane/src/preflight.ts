@@ -216,8 +216,12 @@ export function planTick(state: TickState, now: Date): Decision[] {
   const features = backlog(["feature", "enhancement"]);
   if (features.length) {
     const factoryPrs = state.openPRs.filter((p) => /^(feat|fix)\//.test(p.headRef)).length;
+    // A bug parked on a human (needs-human) is nothing an agent can act on, so it does not hold features back.
     const urgentBug = state.openIssues.some(
-      (i) => i.labels.includes("bug") && (i.labels.includes("priority:1") || i.labels.includes("priority:2")),
+      (i) =>
+        i.labels.includes("bug") &&
+        !i.labels.includes("needs-human") &&
+        (i.labels.includes("priority:1") || i.labels.includes("priority:2")),
     );
     if (factoryPrs >= state.maxOpenFactoryPrs) {
       decisions.push({ kind: "skip", agent: "builder", reason: "backpressure" });

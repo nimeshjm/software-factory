@@ -53,6 +53,12 @@ describe("planTick", () => {
     expect(dispatched(d).map((x) => x.agent)).toEqual(["bug-fixer"]);
     expect(d).toContainEqual({ kind: "skip", agent: "builder", reason: "bugs_first" });
   });
+  it("an urgent bug waiting on a human does not block the builder", () => {
+    const d = planTick(base({ openIssues: [feat(1), issue(2, ["status:backlog", "bug", "priority:1", "needs-human"])] }), NOW);
+    expect(dispatched(d).map((x) => x.agent)).toEqual(["builder"]);
+    expect(d).not.toContainEqual({ kind: "skip", agent: "builder", reason: "bugs_first" });
+    expect(d).toContainEqual({ kind: "skip", agent: "bug-fixer", reason: "no_eligible_bug (#2:needs-human)" });
+  });
   it("skips bug with an open PR referencing it", () => {
     const d = planTick(base({
       openIssues: [issue(2, ["status:backlog", "bug", "priority:3"])],

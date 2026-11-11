@@ -146,7 +146,7 @@ Turns the target's three GitHub security alert feeds (code scanning, Dependabot,
 
 **Control plane**: `AGENT_SPECS["security-triage"] = {maxModelCalls: 15, timeoutMinutes: 10}`; `agent-run.yml` job timeout 15. Dispatch (phase `triage`): once a day in the 06:00 UTC tick with subject `<date>` (alongside the incident responder, each reserving its own quota), and on webhook `code_scanning_alert` (`created`, `appeared_in_branch`) and `dependabot_alert` (`created`), debounced to one webhook-triggered run per 60 minutes. These two events are exempt from the bot-sender drop (GitHub sends them as `github[bot]` or `dependabot[bot]`). The target hook must subscribe to both events (`PATCH /repos/{t}/hooks/{id}` with `add_events`). Alerts on other branches are filtered out by the gather step, not the control plane.
 
-**Pickup**: new issues land `bug security status:backlog factory:accepted priority:N`, so the bug-fixer takes them under the normal author gate and `bugs_first`; `needs-human` ones wait.
+**Pickup**: new issues land `bug security status:backlog factory:accepted priority:N`, so the bug-fixer takes them under the normal author gate and `bugs_first`; `needs-human` ones wait and do not count for `bugs_first`, so they never pause the builder.
 
 ## Target profile (`factory.yml` in the target repo → `inputs/factory.json`)
 
