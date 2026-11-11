@@ -123,6 +123,8 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | 40951538447 | good dry run (implement on flash, 27 calls, 533k tokens) | none needed |
 | 40958393669 (live) | implement re-fetched research's sources, called `retrieve_context` 8 times, wandered off target, stopped at 918k tokens | the `cb52a4f` model swap |
 | 41053297498 (dry, 2026-10-30) | good: 3.8-flash research 22 calls, flash-lite implement 9 calls, findings verified by hand | none needed; live run held for Monday |
+| 43044016537 (bug-fixer, live, 2026-11-11, issue 118) | planned, fixed and pushed `fix/118-js-stack-trace-exposure-information` (two files, as planned); `gh pr create` got a 504 and the run failed, leaving 118 `status:in-progress` with no PR | `gh_retry` / `create_pr` in `scripts/lib.sh` (retries 5xx, reuses a PR the 5xx may have created); branch kept as `backup/118-attempt1-504` |
+| 43051531921 (bug-fixer, live, 2026-11-11, rerun) | **good**: first live bug-fixer run end to end; PR 126 opened, 118 `status:in-review` | none needed |
 
 **Open issues on fantasy-football:**
 - **107** spike, `status:in-progress`, nothing posted. Dry run passed on 2026-10-30; `bugs_first` fixed 2026-11-11, so release it once 118's fix PR has merged (118 itself still pauses the builder while open). See Do next.
@@ -182,6 +184,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 - **Stuck runs:** any failed builder or bug-fixer implement run leaves its issue `status:in-progress`, and a human resets it to `status:backlog`.
 
 **Merge and review**
+- **The reviewer does not notice deleted tests.** PR 126 (bug-fixer rerun on 118) removed the existing "rate limits back-to-back probes" test and added none for the new error path, yet `coverage` and `plan_drift` passed and the verdict was approve. The first attempt (`backup/118-attempt1-504`) had the right test file. Check test diffs by hand on `lit` PRs; a deterministic check (fail `coverage` when a `test/**` diff removes more `it(` blocks than it adds) would catch it.
 - **Dependabot:** at most one merge per reviewer run, cron-triggered only. `wrangler` and `@cloudflare/*` bumps are always lit (`lit_dependencies`). The merge-policy trigger is inferred from the PR author.
 - **Review debounce:** reviews are debounced per PR for 5 minutes, so a push during an in-flight review may leave that review covering the older commit.
 

@@ -47,6 +47,30 @@ filter_labels() {
 
 csv() { paste -sd, - ; }
 
+# transient_gh_error <stderr-file>: true when the failure looks transient (HTTP 5xx or a network error
+# from gh or git), so a retry can succeed. A 4xx (validation, permissions, not found) is never transient.
+transient_gh_error() {
+  grep -qiE 'HTTP 5[0-9]{2}|connection (reset|refused|timed out)|could not resolve host|timed? ?out|unexpected EOF|early EOF|TLS handshake|remote end hung up|RPC failed|temporarily unavailable' "$1"
+}
+
+# gh_retry <cmd...>: run a GitHub write (gh or git_auth) and retry transient failures with exponential
+# backoff: GH_RETRY_MAX attempts (default 4) waiting GH_RETRY_BASE * 2^(n-1) seconds (default 2: 2, 4, 8)
+# plus up to a second of jitter. Non-transient failures return at once. Stdout passes through; the
+# failing attempt's stderr is logged as a warning, and the last one is passed through on give-up.
+gh_retry() {
+  local max=${GH_RETRY_MAX:-4} base=${GH_RETRY_BASE:-2} attempt=1 err rc
+  err="$(mktemp)"
+  while :; do
+    if "$@" 2>"$err"; then rm -f "$err"; return 0; else rc=$?; fi
+    if [ "$attempt" -ge "$max" ] || ! transient_gh_error "$err"; then
+      cat "$err" >&2; rm -f "$err"; return "$rc"
+    fi
+    warn "$1 ${2:-} attempt $attempt failed ($(head -c 160 "$err" | tr '\n' ' ')); retrying"
+    sleep "$(awk -v b="$base" -v n="$attempt" 'BEGIN { srand(); printf "%.3f", b * (2 ^ (n - 1)) + rand() }')"
+    attempt=$((attempt + 1))
+  done
+}
+
 # edit_labels <issue|pr> <number> <add-csv> <remove-csv>
 edit_labels() {
   local kind=$1 num=$2 add=${3:-} rm=${4:-}
@@ -54,7 +78,37 @@ edit_labels() {
   if [ -n "$add" ]; then args+=(--add-label "$add"); fi
   if [ -n "$rm" ]; then args+=(--remove-label "$rm"); fi
   if [ ${#args[@]} -eq 0 ]; then return 0; fi
-  gh "$kind" edit "$num" --repo "$TARGET_REPO" "${args[@]}" >/dev/null
+  gh_retry gh "$kind" edit "$num" --repo "$TARGET_REPO" "${args[@]}" >/dev/null
+}
+
+# open_pr_for <branch>: stdout the number of the open PR whose head is <branch>, or empty.
+open_pr_for() {
+  gh pr list --repo "$TARGET_REPO" --head "$1" --state open --json number --jq '.[0].number // empty'
+}
+
+# create_pr <branch> <gh pr create args...>: open the PR and print its number. A transient failure
+# (a 504 from the gateway) may still have created the PR, so every failure first looks for an open PR
+# on the branch and uses it; otherwise transient errors are retried like gh_retry. On give-up the
+# error names the branch, which is already pushed.
+create_pr() {
+  local branch=$1; shift
+  local max=${GH_RETRY_MAX:-4} base=${GH_RETRY_BASE:-2} attempt=1 err url num
+  err="$(mktemp)"
+  while :; do
+    if url="$(gh pr create "$@" 2>"$err")"; then rm -f "$err"; printf '%s' "${url##*/}"; return 0; fi
+    num="$(open_pr_for "$branch" 2>/dev/null || true)"
+    if [ -n "$num" ]; then
+      warn "pr create failed but PR #$num is open for $branch; using it"
+      rm -f "$err"; printf '%s' "$num"; return 0
+    fi
+    if [ "$attempt" -ge "$max" ] || ! transient_gh_error "$err"; then
+      log "::error::could not open a PR for $branch after $attempt attempt(s); the branch is pushed, commits are on origin/$branch"
+      cat "$err" >&2; rm -f "$err"; return 1
+    fi
+    warn "pr create attempt $attempt failed ($(head -c 160 "$err" | tr '\n' ' ')); retrying"
+    sleep "$(awk -v b="$base" -v n="$attempt" 'BEGIN { srand(); printf "%.3f", b * (2 ^ (n - 1)) + rand() }')"
+    attempt=$((attempt + 1))
+  done
 }
 
 # git_auth <git args...>: run git with the App token injected through the environment (not argv, not on disk).

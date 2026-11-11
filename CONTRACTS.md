@@ -55,6 +55,8 @@ Exit 0 only on success. Always writes `out/result.json`.
 ## Labels
 See `factory.config.json#labels` (includes `spike`, set by triage or a human on investigation-only issues; informational, the control plane does not read it). State machine: `status:backlog → status:plan-review (risk:high) → status:in-progress → status:in-review → status:done`.
 
+**GitHub writes** (`scripts/lib.sh`): the branch push, `gh pr create` (`create_pr`) and every label edit go through `gh_retry`: a transient failure (HTTP 5xx, connection reset or refused, timeout, resolver or TLS error, `RPC failed`) is retried up to `GH_RETRY_MAX` (4) times with `GH_RETRY_BASE` × 2^(n−1) seconds between attempts (2, 4, 8) plus up to a second of jitter; a 4xx or any other error fails at once. A failed `pr create` first looks for an open PR on the branch and uses it, since a 5xx from the gateway may have created the PR. When every attempt fails, the error names the pushed branch so the work is not lost.
+
 ## Light/dark
 `autonomy:dark` iff every changed path matches `factory.json.dark_paths` and no dependency bump touches `lit_dependencies`. With `dark_dependency_bumps: true`, a dependency bump whose every path matches `toolchain.dependency_files` is also `dark` (still never when it touches `lit_dependencies`). Else `autonomy:lit`. Changes to `factory.yml` or `.github/**` are always `lit`. Computed by `factory.policy.classify_autonomy`.
 

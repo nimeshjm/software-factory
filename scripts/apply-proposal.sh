@@ -204,7 +204,7 @@ apply_implement() {
     log "spike findings posted on #$ISSUE; issue closed (no PR)"
     return 0
   fi
-  local branch title ok prefix cur ahead existing pr_url
+  local branch title ok prefix cur ahead existing pr_num
   branch="$(jq -r '.branch' "$f")"
   if ! [[ "$branch" =~ ^(feat|fix)/[0-9]+-[a-z0-9-]+$ ]]; then die "branch '$branch' does not match feat|fix/<N>-<slug>"; fi
   prefix="${branch%%/*}"
@@ -227,13 +227,13 @@ apply_implement() {
   if [ -n "$(git -C "$WORK_DIR" status --porcelain)" ]; then warn "uncommitted changes in work/ are not pushed"; fi
   guard_diff "origin/$DEFAULT_BRANCH...HEAD"
 
-  existing="$(gh pr list --repo "$TARGET_REPO" --head "$branch" --state open --json number --jq '.[0].number // empty')"
+  existing="$(open_pr_for "$branch")"
   if [ -n "$existing" ]; then
     log "PR #$existing already open for $branch"
     printf '%s' "$existing" >"$OUT_DIR/created-pr.txt"
     return 0
   fi
-  git_auth -C "$WORK_DIR" push -u origin "$branch"
+  gh_retry git_auth -C "$WORK_DIR" push -u origin "$branch"
 
   title="$(jq -r '.title' "$f")"
   { jq -r '.body' "$f"
@@ -243,10 +243,10 @@ apply_implement() {
   ok="$(jq -r '.checks_passed' "$f")"
   local args=(--repo "$TARGET_REPO" --base "$DEFAULT_BRANCH" --head "$branch" --title "$title" --body-file "$TMP/pr.md")
   if [ "$ok" != "true" ]; then args+=(--draft); fi
-  pr_url="$(gh pr create "${args[@]}")"
-  printf '%s' "${pr_url##*/}" >"$OUT_DIR/created-pr.txt"
+  pr_num="$(create_pr "$branch" "${args[@]}")" || die "pull request for $branch not created"
+  printf '%s' "$pr_num" >"$OUT_DIR/created-pr.txt"
   edit_labels issue "$ISSUE" "status:in-review" "status:in-progress,status:plan-review,status:backlog"
-  log "opened $pr_url"
+  log "opened PR #$pr_num for $branch"
 }
 
 # ---------------------------------------------------------------- reviewer
