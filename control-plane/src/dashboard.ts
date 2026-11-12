@@ -277,8 +277,10 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
     }
   }
   // Latest run per subject that ended badly, unless a later run on the same subject succeeded.
+  // A manual rerun carries subject manual:<id>, so runs are keyed by their issue or PR number when they have one.
+  const subjectKey = (r: RunRow) => (r.issue_number ? `issue:${r.issue_number}` : r.pr_number ? `pr:${r.pr_number}` : r.subject);
   const latestBySubject = new Map<string, RunRow>();
-  for (const r of windowRuns) if (!latestBySubject.has(r.subject)) latestBySubject.set(r.subject, r);
+  for (const r of windowRuns) if (!latestBySubject.has(subjectKey(r))) latestBySubject.set(subjectKey(r), r);
   for (const r of latestBySubject.values()) {
     if (r.status === "failed" || r.status === "timeout" || r.status === "lost") {
       add({

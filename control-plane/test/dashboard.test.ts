@@ -122,6 +122,18 @@ describe("buildDashboard", () => {
     expect(bugs.gate).toBeNull();
   });
 
+  it("a manual rerun that succeeded clears the failed-run of the cron run on the same issue", () => {
+    const d = buildDashboard(
+      input({
+        runs: [
+          run({ id: "cron", subject: "issue:118", issue_number: 118, status: "failed", dispatched_at: "2026-11-11T15:00:00Z", finished_at: "2026-11-11T15:07:00Z" }),
+          run({ id: "manual", subject: "manual:manual", issue_number: 118, trigger: "manual", status: "success", dispatched_at: "2026-11-11T15:45:00Z", finished_at: "2026-11-11T15:50:00Z" }),
+        ],
+      }),
+    );
+    expect(d.blocked).toEqual([]);
+  });
+
   it("stuck-in-progress is not raised while a run is in flight on the issue", () => {
     const d = buildDashboard(input({ runs: [run({ id: "x", subject: "issue:107", status: "started" })], openIssues: [issue(107, ["feature", "status:in-progress"])] }));
     expect(d.blocked).toEqual([]);
