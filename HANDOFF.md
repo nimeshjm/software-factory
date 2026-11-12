@@ -4,10 +4,11 @@ Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-02 15:50 UTC
 
 ## Do next (checked 2026-11-12 10:30 UTC)
 
-**Approval trigger (built 2026-11-12, uncommitted at the time of writing).** The control plane now dispatches the reviewer when a human submits an `APPROVED` review (`control-plane/src/webhooks.ts`, `mapEvent` and `debounceWindowMs`), so a `lit` PR merges once you approve it. Two owner steps make it live:
-1. Push `main`: CI deploys the Worker.
-2. Subscribe the target hook to the event: `gh api repos/nimeshjm/fantasy-football/hooks/704460903 -X PATCH -f 'add_events[]=pull_request_review'`.
-Then either merge PR 126 yourself (`gh pr merge 126 -R nimeshjm/fantasy-football --squash`) or re-approve it to exercise the new path. Until 118 closes, `bugs_first` keeps the builder off 107 and 125. The `factory-audit` skill (`.claude/skills/factory-audit/`) is the way to check the next day: it flags an approved-but-unmerged `lit` PR as a `STALL:` line.
+**Approval trigger: live and proven (2026-11-12).** The control plane dispatches the reviewer when a human submits an `APPROVED` review (`control-plane/src/webhooks.ts`, `mapEvent` and `debounceWindowMs`; commit `89f2676`, deployed by CI run 43223444143; hook 704460903 subscribed to `pull_request_review` at 13:11 UTC). First live use: the owner re-approved PR 126 at 13:11, reviewer run 43224911506 was dispatched within seconds, merge-policy answered `{"merge":true,"reasons":["human approved"]}` and squash-merged at 13:12; issue 118 closed as `status:done`.
+
+**Then, within five minutes (13:13 to 13:17 UTC):** the owner approved Dependabot PRs 128 (`wrangler` 4.158.0) and 127 (`@cloudflare/workers-types`); the trigger dispatched reviewer runs 43225315417 and 43225329072, both answered `human approved` and merged. The Deploy of the 126 merge (run 43225059867, sha `76264a9`) had failed with Cloudflare API error 10013 on the secrets endpoint, but the two merges that followed deployed cleanly (`76339eb`, `fafacb8`), so the live site carries all three changes and the 10013 was a transient. Verifier runs 43225622953 (passed) and 43225740194 followed the deploys. With 118 closed, the 13:15 tick dispatched the builder on 107 (run 43225593828, `builder-202611121315-issue-107`): the first spike apply against GitHub, live. Reviewer run 43225912189 then picked up PR 88 (the lit `vitest` group bump, `needs-human`) from a check-suite event.
+
+**Check next:** the 107 run. Success is a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed. If it fails, the issue stays `status:in-progress`; read `stop_reason` and compare with the 107 history below. Then 125 (backlog, `risk:low size:S`) is the next builder pickup. `/status` `last_tick.decisions` and the `factory-audit` skill (`.claude/skills/factory-audit/`) show both.
 
 **Earlier state (checked 2026-11-02 15:50 UTC), kept for the history of 107 and 118.**
 
@@ -154,7 +155,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 - **GitHub App** `software-factory-agent-bot` (id 5514689), installed on both repos.
 - **Repo secrets:** `GEMINI_API_KEY` (dedicated Google Cloud project `gen-lang-client-0040576374`), `FACTORY_APP_ID`, `FACTORY_APP_PRIVATE_KEY`, `HONEYCOMB_API_KEY`, `HONEYCOMB_QUERY_KEY` (unused), `SMOKE_AUTH_TOKEN`, `FACTORY_TOKEN`, `TAVILY_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 - **Repo variables:** `FACTORY_URL`, `TARGET_BASE_URL`.
-- **Worker:** secret `ALERT_WEBHOOK_URL` points at Discord; the target webhook (id 704460903) is registered for `issues, pull_request, check_suite, workflow_run, code_scanning_alert, dependabot_alert`. `pull_request_review` must be added by hand (owner step, see Do next) for the approval trigger built on 2026-11-12.
+- **Worker:** secret `ALERT_WEBHOOK_URL` points at Discord; the target webhook (id 704460903) is registered for `issues, pull_request, check_suite, workflow_run, code_scanning_alert, dependabot_alert`. `pull_request_review` was added on 2026-11-12 for the approval trigger.
 - **Target:** has the label set, squash-only merges and a `main` ruleset.
 - **To rotate the Cloudflare token:** put it in `.env`, then run `sed -n 's/^CLOUDFLARE_API_TOKEN=//p' .env | tr -d '\r\n"' | gh secret set CLOUDFLARE_API_TOKEN`.
 
