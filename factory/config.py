@@ -31,6 +31,8 @@ class RunSpec:
     timeout_minutes: float
     context: dict[str, Any] = field(default_factory=dict)
     fallback_model_ids: tuple[str, ...] = ()
+    first_event_timeout_s: float = 150.0
+    unresponsive_switch_after: int = 2
 
     @property
     def timeout_seconds(self) -> float:
@@ -79,6 +81,8 @@ def resolve_run_spec(cfg: dict[str, Any], agent: str, phase: str) -> RunSpec:
         timeout_minutes=float(eff["timeout_minutes"]),
         context=dict(cfg.get("context", {})),
         fallback_model_ids=tuple(m.get("fallback_model_ids", [])),
+        first_event_timeout_s=float(m.get("first_event_timeout_s", 150.0)),
+        unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
     )
 
 
@@ -98,7 +102,10 @@ def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> 
     if "total_tokens" in m and "total_tokens" in limits:
         limits["total_tokens"] = min(limits["total_tokens"], int(m["total_tokens"]))
     return replace(spec, model_key=key, model_id=m["model_id"], params=json.loads(json.dumps(m.get("params", {}))),
-                   fallback_model_ids=tuple(m.get("fallback_model_ids", [])), max_model_calls=cap, limits=limits)
+                   fallback_model_ids=tuple(m.get("fallback_model_ids", [])),
+                   first_event_timeout_s=float(m.get("first_event_timeout_s", 150.0)),
+                   unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
+                   max_model_calls=cap, limits=limits)
 
 
 def issue_labels(inputs_dir: str | Path) -> list[str]:

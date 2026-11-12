@@ -19,6 +19,7 @@ from .guards.output_guard import redact, scan_obj
 from .tools.profile import set_profile
 from .prompts import build_task_message, load_system_prompt
 from .schemas import GuardEvent, RunResult, ToolCall, proposal_model_for
+from .schemas.models import ModelSwitch
 
 FINALIZE_PROMPT = "Time budget is spent. Emit the final structured proposal now, based on what you have."
 
@@ -36,7 +37,9 @@ def _build_model(spec, fake: bool):
     if not key:
         raise RuntimeError("GEMINI_API_KEY is not set")
     return FactoryGeminiModel(client_args={"api_key": key}, model_id=spec.model_id, params=spec.params,
-                              fallback_model_ids=spec.fallback_model_ids)
+                              fallback_model_ids=spec.fallback_model_ids,
+                              first_event_timeout_s=spec.first_event_timeout_s,
+                              unresponsive_switch_after=spec.unresponsive_switch_after)
 
 
 def _usage(res) -> dict[str, int]:
@@ -136,6 +139,7 @@ def run(args: argparse.Namespace) -> int:
         model_ids_used = getattr(model, "model_ids_used", None)
         if model_ids_used is not None:
             result.model_ids_used = model_ids_used
+            result.model_switches = model.model_switches
             model.on_switch = lambda old, new: quota.extra_call()
         agent = Agent(
             model=model,
@@ -196,6 +200,7 @@ def run(args: argparse.Namespace) -> int:
         result.model_calls = quota.calls if quota else 0
         result.throttles = quota.throttles if quota else 0
         result.duration_s = round(time.monotonic() - started, 2)
+        result.model_switches = [ModelSwitch.model_validate(s) for s in result.model_switches]  # live dicts from the model
         result.guard_events = [GuardEvent(**e) for e in log.events]
         result.tool_calls = [ToolCall(**c) for c in tool_log.calls] if tool_log else []
         _write(out, "result.json", result.model_dump_json(indent=2))

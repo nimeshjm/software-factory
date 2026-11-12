@@ -12,6 +12,8 @@ export interface RecentRun {
   agent: string;
   subject: string;
   dispatchedAt: string;
+  /** Ledger status: dispatched, started, success, failed, timeout, denied or lost. */
+  status: string;
 }
 export interface PRInfo {
   number: number;
@@ -108,12 +110,47 @@ export interface Candidate {
   reason: string | null;
 }
 
+export const FAILURE_STATUSES = ["failed", "timeout", "lost"];
+export const FAILURE_WINDOW_MS = 24 * 3600_000;
+export const FAILURE_CAP = 3;
+/** Minutes to wait after the 1st and the 2nd recent failure. */
+export const BACKOFF_MIN = [60, 180];
+
+const isoMinute = (ms: number): string => new Date(ms).toISOString().slice(0, 16) + "Z";
+
+/**
+ * Pure: per-subject failure backoff. Recent failures are the subject's failed, timed-out or lost runs from the
+ * last 24 h that were dispatched after its latest success. Returns `retry-after:<ISO>` while waiting,
+ * `failure-cap:<ISO>` at FAILURE_CAP failures, null when the subject may run.
+ */
+export function failureBackoff(subject: string, recent: RecentRun[], now: Date): string | null {
+  const runs = recent.filter((r) => r.subject === subject);
+  const lastSuccess = runs
+    .filter((r) => r.status === "success")
+    .map((r) => Date.parse(r.dispatchedAt))
+    .reduce((a, b) => Math.max(a, b), -Infinity);
+  const failures = runs
+    .filter((r) => FAILURE_STATUSES.includes(r.status))
+    .map((r) => Date.parse(r.dispatchedAt))
+    .filter((t) => now.getTime() - t < FAILURE_WINDOW_MS && t > lastSuccess)
+    .sort((a, b) => a - b);
+  const n = failures.length;
+  if (n === 0) return null;
+  if (n >= FAILURE_CAP) return `failure-cap:${isoMinute(failures[0] + FAILURE_WINDOW_MS)}`;
+  const retryAt = failures[n - 1] + BACKOFF_MIN[n - 1] * 60_000;
+  return now.getTime() < retryAt ? `retry-after:${isoMinute(retryAt)}` : null;
+}
+
 /**
  * Pure: the ordered candidate list the tick walks for one agent (builder: feature and enhancement;
  * bug-fixer: bug), with each issue's skip reason. The tick dispatches the first candidate whose
  * reason is null; the dashboard shows the whole list as "what happens next".
  */
-export function candidateQueue(state: Pick<TickState, "openIssues" | "openPRs">, types: string[]): Candidate[] {
+export function candidateQueue(
+  state: Pick<TickState, "openIssues" | "openPRs" | "recentRuns">,
+  types: string[],
+  now: Date,
+): Candidate[] {
   const openNumbers = new Set(state.openIssues.map((i) => i.number));
   const hasPR = (n: number) => state.openPRs.some((p) => prReferences(p, n));
   const builder = types.includes("feature");
@@ -128,6 +165,7 @@ export function candidateQueue(state: Pick<TickState, "openIssues" | "openPRs">,
       let reason: string | null = hasPR(issue.number) ? "has-open-pr" : blockReason(issue, openNumbers);
       // risk:high is dispatched too: the pipeline stops after the plan and parks the issue in status:plan-review.
       if (builder && reason === null && !issue.labels.includes("risk:low") && !issue.labels.includes("risk:high")) reason = "awaiting-risk";
+      if (reason === null) reason = failureBackoff(`issue:${issue.number}`, state.recentRuns ?? [], now);
       return { issue, reason };
     });
 }
@@ -247,7 +285,7 @@ export function planTick(state: TickState, now: Date): Decision[] {
   };
 
   // bug-fixer
-  const bugs = candidateQueue(state, BUG_TYPES);
+  const bugs = candidateQueue(state, BUG_TYPES, now);
   if (bugs.length) {
     const { chosen, blocked } = pick(bugs);
     if (chosen) dispatch("bug-fixer", `issue:${chosen.number}`, chosen.number, null, "");
@@ -255,7 +293,7 @@ export function planTick(state: TickState, now: Date): Decision[] {
   }
 
   // builder
-  const features = candidateQueue(state, BUILDER_TYPES);
+  const features = candidateQueue(state, BUILDER_TYPES, now);
   if (features.length) {
     if (countFactoryPRs(state.openPRs) >= state.maxOpenFactoryPrs) {
       decisions.push({ kind: "skip", agent: "builder", reason: "backpressure" });

@@ -2,7 +2,50 @@
 
 Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-02 15:50 UTC (security-triage live, two problems found). Everything below is the state at that time.
 
-## Do next (checked 2026-11-12 14:10 UTC)
+## Do next (checked 2026-11-12 15:30 UTC)
+
+**Unresponsive-model fallback and per-issue failure backoff (built 2026-11-12 15:30 UTC, uncommitted in the working tree).** Three fixes for the 107 retry loop below; contract in `CONTRACTS.md` (`**Unresponsive model fallback:**` under Web research and spikes; "Failure backoff" under Control plane HTTP).
+
+1. **Harness** (`factory/gemini.py`): a request that yields no content and ends in a non-daily-quota throttle, a 503, an `httpx` transport error, or no first event within `first_event_timeout_s` (150 s) counts as *unresponsive*; two in a row on the same model (`unresponsive_switch_after`) switch to the next `fallback_model_ids` entry, the same way a daily-quota 429 already did (stderr `[model] <old> unresponsive (<detail>); switching to <new>`). Below the threshold strands backs off and retries as before. `result.json` gains `model_switches[{from, to, reason}]`. Both knobs are optional per `models.<key>` in `factory.config.json`; defaults are in code.
+2. **Control plane** (`control-plane/src/preflight.ts` `failureBackoff`, used by `candidateQueue` so the tick and the dashboard agree): an issue whose last run ended `failed`, `timeout` or `lost` is skipped for 60 minutes after one failure, 180 after two, and for 24 hours after three (`retry-after:<time>` / `failure-cap:<time>` as the skip reason), counted from the ledger's last 24 hours and reset by a `success`. The tick walks on to the next candidate instead of stalling. The dashboard shows `backoff` (waits) and `failure-cap` (you, with the manual `gh workflow run` to retry now). `loadTickState` now reads `status` with the recent runs.
+3. **Step log** (`scripts/run-phases.sh`): a failed phase now prints a second `::error::` line with `stop_reason`, `model_calls`, `total_tokens`, the models used, the switches and `error` from its `result.json`, so a dead run is readable without downloading the artifact (`CONTRACTS.md` Post-step rules; tested with a stub harness).
+
+**What changes live when this is pushed:** CI deploys the Worker. On the next tick 107 has five failures in the last 24 hours, so it is `failure-cap` until about 13:15 UTC on 2026-11-13 and the builder moves on to the next candidate (115, the API-Football epic, gets planned; then 116). The harness change applies to the next run that starts after the push. To retry 107 by hand before the cap lifts: `gh workflow run builder.yml -R nimeshjm/software-factory -f issue=107`.
+
+**Verification (2026-11-12, after the build):**
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | 226 passed (216 before) |
+| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 61 passed (48 before), clean, succeeds |
+| `actionlint`, `shellcheck -x scripts/*.sh`, `scripts/check-config-sync.sh` | clean |
+| `run-phases.sh` with a stub `uv` that writes a `result.json` and exits 1, and one that exits 2 | prints `phase research result: stop_reason=timeout ... switches=gemini-3.8-flash>gemini-3.6-flash (unresponsive:throttled) error=...` and `phase research wrote no result.json` |
+
+Not exercised live: no workflow dispatched, nothing deployed. The first live proof is the next 3.8-flash research run that hits a throttle: look for `[model] gemini-3.8-flash unresponsive (...)` in the step log and `model_switches` in `phases/research/result.json`; and the next tick after the push, whose `last_tick.decisions` should list `#107:failure-cap:<time>` and dispatch the next candidate.
+
+**The 107 retry loop (found 2026-11-12 15:20 UTC).** `gemini-3.8-flash` stopped answering at about 13:15 UTC and the builder retried 107 on every free tick. The label only moves in the apply step (`scripts/apply-proposal.sh`), so a harness failure left 107 in `status:backlog` and the tick re-picked it; the fallback in `factory/gemini.py` only switched on a daily-quota 429, so a throttled model spent each phase's whole budget; strands retried each throttle six times with backoff, hence six calls and zero tokens per run. (The earlier note that a failed run leaves the issue `status:in-progress` was wrong: that only happens once apply has started.)
+
+| Run (UTC) | Research outcome |
+|---|---|
+| 43225593828 (13:15) | `timeout`, `latency_guard hard timeout`, 3 calls, 0 tokens |
+| 43227971800 (13:30) | `exception`, `ReadError:`, 1 call |
+| 43237920290 (14:30) | `timeout`, `ModelThrottledException: Deadline expired before operation could complete.`, 6 calls, 0 tokens |
+| 43243138668 (15:00) | `exception`, `ModelThrottledException: This model is currently experiencing high demand...`, 6 calls |
+| 43245862580 (15:15) | `timeout`, `ModelThrottledException: ... high demand ...`, 6 calls, 0 tokens |
+
+Each attempt costs about six model calls and twenty minutes of runner time; model calls stood at 110 of 400 at 15:30 UTC, and the 15:30 tick will dispatch 107 again until this is pushed (or 107 is parked: `gh issue edit 107 -R nimeshjm/fantasy-football --remove-label status:backlog --add-label status:in-progress`). Between the failures the 14:00 and 14:15 ticks planned epics 35 and 106 on flash-lite without trouble, so only 3.8-flash was affected.
+
+**Everything else on 2026-11-12 (checked 15:20 UTC):**
+- **Epics 35 and 106 were planned** (runs 43232794169 and 43235336033) and sit in `status:plan-review needs-human` with their plan comments. **Epic 115** is still `status:backlog risk:high` and is the next builder candidate once 107 is capped; `candidateQueue` still has no `epic` exclusion, so either add one or accept the plan run.
+- **119, 120, 121** (security bugs) are `needs-human`, unchanged; the bug-fixer skips them every tick. PR 88, the `vitest` bump that would close 121, still fails `toolchain.setup`, so the reviewer posts "could not set up this branch" and leaves it `needs-human`.
+- **100 to 103 and 108 to 110** are `author-not-trusted` (bot-filed, no `factory:accepted`); the dashboard lists the label command for each.
+- **116, 117, 125** are backlog and healthy. 116 is `risk:high` and gets a plan run when its turn comes; 117 is `needs-human`; 125 is `risk:low size:S` and is the next real build after the spikes.
+- **118 closed** `status:done` via PR 126 (merged 13:12 UTC).
+- **Yesterday's two failed runs self-healed:** bug-fixer 43044016537 (15:00, apply 504) was followed by the good 15:45 rerun; reviewer 43059024527 (16:30, `gather-inputs.sh json` exit 1, transient) was followed by a clean 17:30 run. Reviewer 43096480238 (20:30) was a `startup_failure` with no jobs, known noise.
+- **Not yet adopted on the target:** `nimeshjm/fantasy-football` `factory.yml` has no `amigos`, `plan_review` or `limits.max_context_chars` blocks, so plan comments carry no amigos row and any human approval merges. Copy them from `examples/fantasy-football/factory.yml` when wanted.
+- **Software-factory repo** has one open issue, #1 (Honeycomb board for factory operations); nothing acts on it.
+
+**Earlier on 2026-11-12 (checked 14:10 UTC).**
 
 **Dashboard (built 2026-11-12 14:10 UTC, uncommitted in the working tree).** `GET /dashboard` on the control plane: what happened, what is blocked (with the command that clears each item), what the next tick will do. Contract in `CONTRACTS.md` `## Control plane HTTP`, runbook in `control-plane/README.md` `## Dashboard`, code in `control-plane/src/dashboard.ts` (pure build and render, tested) with the route in `src/index.ts`. `preflight.ts` gained `candidateQueue`, `urgentBugs` and `countFactoryPRs`; `planTick` now walks `candidateQueue`, so the forecast and the tick cannot disagree (behaviour unchanged, 37 existing tests pass as before). `github.ts` issue and PR rows carry titles, authors, timestamps, `html_url`, and `listIssues` takes `since` and `includePRs`. Nothing else changed. Push `main` and CI deploys it; then open `https://factory-control-plane.nimeshjm.workers.dev/dashboard`.
 
@@ -47,7 +90,7 @@ Not exercised live: no workflow dispatched, nothing deployed, nothing committed.
 
 **Then, within five minutes (13:13 to 13:17 UTC):** the owner approved Dependabot PRs 128 (`wrangler` 4.158.0) and 127 (`@cloudflare/workers-types`); the trigger dispatched reviewer runs 43225315417 and 43225329072, both answered `human approved` and merged. The Deploy of the 126 merge (run 43225059867, sha `76264a9`) had failed with Cloudflare API error 10013 on the secrets endpoint, but the two merges that followed deployed cleanly (`76339eb`, `fafacb8`), so the live site carries all three changes and the 10013 was a transient. Verifier runs 43225622953 (passed) and 43225740194 followed the deploys. With 118 closed, the 13:15 tick dispatched the builder on 107 (run 43225593828, `builder-202611121315-issue-107`): the first spike apply against GitHub, live. Reviewer run 43225912189 then picked up PR 88 (the lit `vitest` group bump, `needs-human`) from a check-suite event.
 
-**Check next:** the 107 run. Success is a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed. If it fails, the issue stays `status:in-progress`; read `stop_reason` and compare with the 107 history below. Then 125 (backlog, `risk:low size:S`) is the next builder pickup. `/status` `last_tick.decisions` and the `factory-audit` skill (`.claude/skills/factory-audit/`) show both.
+**Check next:** the 107 run. Success is a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed. If it fails in the harness, the issue stays `status:backlog` and the tick retries it (subject to the failure backoff above); read `stop_reason` and compare with the 107 history below. Then 125 (backlog, `risk:low size:S`) is the next builder pickup. `/status` `last_tick.decisions` and the `factory-audit` skill (`.claude/skills/factory-audit/`) show both.
 
 **Earlier state (checked 2026-11-02 15:50 UTC), kept for the history of 107 and 118.**
 
@@ -173,13 +216,16 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | 41053297498 (dry, 2026-10-30) | good: 3.8-flash research 22 calls, flash-lite implement 9 calls, findings verified by hand | none needed; live run held for Monday |
 | 43044016537 (bug-fixer, live, 2026-11-11, issue 118) | planned, fixed and pushed `fix/118-js-stack-trace-exposure-information` (two files, as planned); `gh pr create` got a 504 and the run failed, leaving 118 `status:in-progress` with no PR | `gh_retry` / `create_pr` in `scripts/lib.sh` (retries 5xx, reuses a PR the 5xx may have created); branch kept as `backup/118-attempt1-504` |
 | 43051531921 (bug-fixer, live, 2026-11-11, rerun) | **good**: first live bug-fixer run end to end; PR 126 opened, 118 `status:in-review` | none needed |
+| 43225593828, 43227971800, 43237920290, 43243138668, 43245862580 (live, 2026-11-12, 13:15 to 15:15) | all died in research on `gemini-3.8-flash` before any tool call: hard timeout, `ReadError`, `Deadline expired`, `high demand`; zero tokens; 107 stayed `status:backlog` and the tick retried every 15 minutes | unresponsive-model fallback in `factory/gemini.py`; per-issue failure backoff in `preflight.ts` (see Do next) |
 
 **Open issues on fantasy-football:**
-- **107** spike, `status:in-progress`, nothing posted. Dry run passed on 2026-10-30; `bugs_first` fixed 2026-11-11, so release it once 118's fix PR has merged (118 itself still pauses the builder while open). See Do next.
-- **118 to 121** security bugs from security-triage, all `needs-human` (118 wrongly so). See Do next.
+- **107** spike, `status:backlog`, nothing posted. Released 2026-11-11; five live runs on 2026-11-12 died in research on a throttled 3.8-flash (see Do next). It is the first candidate again once the failure cap lifts or a human dispatches it.
+- **118** closed `status:done` 2026-11-12 (PR 126). **119 to 121** security bugs, `needs-human`, yours (Dependabot bumps for `undici` and `@vitest/mocker`; `sharp` has no PR).
+- **35 and 106** epics, planned 2026-11-12, `status:plan-review needs-human`: read the plan comment, then `plan:approved` or relabel. **115** epic, `status:backlog risk:high`, will be planned next.
 - **117** "Spike other football API providers", `spike risk:low`, held with `needs-human`.
-- **116** "Remove API-Football", `risk:high`, waits for `plan:approved`.
-- **108 to 110** awards implementation (epic 106) and **100 to 103** (epic 35) are blocked on the author gate or `risk:high`.
+- **116** "Remove API-Football", `risk:high size:S`, gets a plan run when it reaches the front of the queue, then waits for `plan:approved`.
+- **125** "Liga Portugal Dream Team page as best XI source", `risk:low size:S`, the next real build.
+- **108 to 110** awards implementation (epic 106) and **100 to 103** (epic 35) are `author-not-trusted` (bot-filed, no `factory:accepted`).
 
 **Verification of the Plan B working tree (2026-10-30, uncommitted at the time of writing):**
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planTick, parseDependencies, type TickState, type IssueInfo } from "../src/preflight";
+import { planTick, parseDependencies, failureBackoff, type TickState, type IssueInfo, type RecentRun } from "../src/preflight";
 import { AGENT_SPECS } from "../src/config";
 
 const NOW = new Date("2026-10-21T10:07:00Z");
@@ -170,9 +170,9 @@ describe("planTick", () => {
     expect(dispatched(planTick(base({ openPRs: prs }), NOW))[0]).toMatchObject({
       agent: "reviewer", subject: "dependabot", inputs: { pr: "1" },
     });
-    const recent = [{ agent: "reviewer", subject: "dependabot", dispatchedAt: "2026-10-21T09:30:00Z" }];
+    const recent = [{ agent: "reviewer", subject: "dependabot", dispatchedAt: "2026-10-21T09:30:00Z", status: "success" }];
     expect(dispatched(planTick(base({ openPRs: prs, recentRuns: recent }), NOW))).toHaveLength(0);
-    const old = [{ agent: "reviewer", subject: "dependabot", dispatchedAt: "2026-10-21T09:00:00Z" }];
+    const old = [{ agent: "reviewer", subject: "dependabot", dispatchedAt: "2026-10-21T09:00:00Z", status: "success" }];
     expect(dispatched(planTick(base({ openPRs: prs, recentRuns: old }), NOW))).toHaveLength(1);
     expect(dispatched(planTick(base({}), NOW))).toHaveLength(0);
   });
@@ -183,11 +183,67 @@ describe("planTick", () => {
     expect(both[0]).toMatchObject({ agent: "incident-responder", subject: "2026-10-21" });
     expect(both[1]).toMatchObject({ agent: "security-triage", subject: "2026-10-21" });
     expect(both[1].inputs.phase).toBe("triage");
-    const recent = [{ agent: "incident-responder", subject: "2026-10-21", dispatchedAt: "2026-10-21T06:00:00Z" }];
+    const recent = [{ agent: "incident-responder", subject: "2026-10-21", dispatchedAt: "2026-10-21T06:00:00Z", status: "success" }];
     expect(dispatched(planTick(base({ recentRuns: recent }), six)).map((d) => d.agent)).toEqual(["security-triage"]);
-    const secRecent = [{ agent: "security-triage", subject: "2026-10-21", dispatchedAt: "2026-10-21T06:00:00Z" }];
+    const secRecent = [{ agent: "security-triage", subject: "2026-10-21", dispatchedAt: "2026-10-21T06:00:00Z", status: "success" }];
     expect(dispatched(planTick(base({ recentRuns: secRecent }), six)).map((d) => d.agent)).toEqual(["incident-responder"]);
     expect(dispatched(planTick(base({ recentRuns: [...recent, ...secRecent] }), six))).toHaveLength(0);
     expect(dispatched(planTick(base(), NOW))).toHaveLength(0);
+  });
+});
+
+const minAgo = (m: number) => new Date(NOW.getTime() - m * 60_000).toISOString();
+const rr = (status: string, minutesAgo: number, subject = "issue:7", agent = "builder"): RecentRun => ({
+  agent, subject, status, dispatchedAt: minAgo(minutesAgo),
+});
+
+describe("failureBackoff", () => {
+  it("is null with no failures", () => {
+    expect(failureBackoff("issue:7", [], NOW)).toBeNull();
+  });
+  it("waits 60 minutes after one failure", () => {
+    expect(failureBackoff("issue:7", [rr("failed", 30)], NOW)).toBe("retry-after:2026-10-21T10:37Z");
+    expect(failureBackoff("issue:7", [rr("failed", 61)], NOW)).toBeNull();
+  });
+  it("waits 180 minutes after the latest of two failures", () => {
+    expect(failureBackoff("issue:7", [rr("timeout", 300), rr("lost", 120)], NOW)).toBe("retry-after:2026-10-21T11:07Z");
+    expect(failureBackoff("issue:7", [rr("failed", 400), rr("failed", 181)], NOW)).toBeNull();
+  });
+  it("caps at three failures until 24 h after the oldest", () => {
+    const r = failureBackoff("issue:7", [rr("failed", 600), rr("failed", 300), rr("failed", 10)], NOW);
+    expect(r).toBe("failure-cap:2026-10-22T00:07Z");
+  });
+  it("a success after the failures resets the count", () => {
+    expect(failureBackoff("issue:7", [rr("failed", 200), rr("failed", 190), rr("success", 120, "issue:7", "bug-fixer")], NOW)).toBeNull();
+    expect(failureBackoff("issue:7", [rr("failed", 200), rr("success", 120), rr("failed", 30)], NOW)).toBe("retry-after:2026-10-21T10:37Z");
+  });
+  it("ignores denied, in-flight and other subjects", () => {
+    const runs = [rr("denied", 5), rr("started", 5), rr("dispatched", 5), rr("failed", 5, "issue:8")];
+    expect(failureBackoff("issue:7", runs, NOW)).toBeNull();
+  });
+  it("ignores failures older than 24 h", () => {
+    expect(failureBackoff("issue:7", [rr("failed", 24 * 60 + 1), rr("failed", 25 * 60), rr("failed", 26 * 60)], NOW)).toBeNull();
+  });
+});
+
+describe("planTick failure backoff", () => {
+  it("walks past a backed-off issue to the next candidate", () => {
+    const d = planTick(base({ openIssues: [feat(7), feat(8)], recentRuns: [rr("failed", 30)] }), NOW);
+    expect(dispatched(d).map((x) => x.subject)).toEqual(["issue:8"]);
+  });
+  it("redispatches after the backoff", () => {
+    const d = planTick(base({ openIssues: [feat(7), feat(8)], recentRuns: [rr("failed", 61)] }), NOW);
+    expect(dispatched(d).map((x) => x.subject)).toEqual(["issue:7"]);
+  });
+  it("reports the reason in the skip when nothing else is eligible", () => {
+    const d = planTick(base({ openIssues: [feat(7)], recentRuns: [rr("failed", 30)] }), NOW);
+    expect(d.find((x) => x.kind === "skip" && x.agent === "builder")).toEqual({
+      kind: "skip", agent: "builder", reason: "no_eligible_feature (#7:retry-after:2026-10-21T10:37Z)",
+    });
+  });
+  it("stops at the cap", () => {
+    const d = planTick(base({ openIssues: [feat(7)], recentRuns: [rr("failed", 600), rr("failed", 300), rr("failed", 10)] }), NOW);
+    expect(dispatched(d)).toEqual([]);
+    expect(JSON.stringify(d)).toContain("#7:failure-cap:2026-10-22T00:07Z");
   });
 });

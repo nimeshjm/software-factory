@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 
 class _Base(BaseModel):
@@ -181,6 +181,18 @@ class ToolCall(_Base):
     ts: str
 
 
+class ModelSwitch(_Base):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    from_model: str = Field(alias="from")
+    to: str
+    reason: str
+
+    @model_serializer
+    def _dump(self) -> dict[str, str]:
+        return {"from": self.from_model, "to": self.to, "reason": self.reason}
+
+
 class RunResult(_Base):
     run_id: str
     agent: str
@@ -195,5 +207,6 @@ class RunResult(_Base):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     throttles: int = 0
     model_ids_used: list[str] = Field(default_factory=list)
+    model_switches: list[ModelSwitch] = Field(default_factory=list)
     error: str | None = None
     dry_run: bool = False

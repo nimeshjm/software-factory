@@ -50,11 +50,13 @@ export type BlockKind =
   | "stuck-in-progress"
   | "orphan-in-review"
   | "failed-run"
+  | "failure-cap"
   | "plan-review"
   | "needs-human"
   | "awaiting-risk"
   | "author-not-trusted"
   | "blocked-by"
+  | "backoff"
   | "lit-pr"
   | "needs-human-pr"
   | "bugs-first"
@@ -62,12 +64,12 @@ export type BlockKind =
   | "quota";
 
 const BLOCK_ORDER: BlockKind[] = [
-  "paused", "overdue-run", "stuck-in-progress", "orphan-in-review", "failed-run", "plan-review", "needs-human",
-  "awaiting-risk", "author-not-trusted", "blocked-by", "lit-pr", "needs-human-pr", "bugs-first", "backpressure", "quota",
+  "paused", "overdue-run", "stuck-in-progress", "orphan-in-review", "failed-run", "failure-cap", "plan-review", "needs-human",
+  "awaiting-risk", "author-not-trusted", "blocked-by", "backoff", "lit-pr", "needs-human-pr", "bugs-first", "backpressure", "quota",
 ];
 /** Kinds a human has to act on; the rest clear on their own (a dependency closes, the day rolls over). */
 const HUMAN_KINDS = new Set<BlockKind>([
-  "paused", "stuck-in-progress", "orphan-in-review", "failed-run", "plan-review", "needs-human", "awaiting-risk",
+  "paused", "stuck-in-progress", "orphan-in-review", "failed-run", "failure-cap", "plan-review", "needs-human", "awaiting-risk",
   "author-not-trusted", "lit-pr", "needs-human-pr", "backpressure",
 ]);
 
@@ -295,7 +297,11 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
   const issues = input.openIssues ?? [];
   const prs = input.openPRs ?? [];
   const openPRInfos = prs.map(toPRInfo);
-  const stateLike = { openIssues: issues.map(toIssueInfo), openPRs: openPRInfos };
+  const stateLike = {
+    openIssues: issues.map(toIssueInfo),
+    openPRs: openPRInfos,
+    recentRuns: input.runs.map((r) => ({ agent: r.agent, subject: r.subject, dispatchedAt: r.dispatched_at, status: r.status })),
+  };
   const titleOf = new Map(issues.map((i) => [i.number, i.title]));
 
   for (const i of issues) {
@@ -325,8 +331,8 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
   }
 
   const queues = [
-    { agent: "builder", items: candidateQueue(stateLike, BUILDER_TYPES) },
-    { agent: "bug-fixer", items: candidateQueue(stateLike, BUG_TYPES) },
+    { agent: "builder", items: candidateQueue(stateLike, BUILDER_TYPES, now) },
+    { agent: "bug-fixer", items: candidateQueue(stateLike, BUG_TYPES, now) },
   ];
   for (const { agent, items } of queues) {
     for (const c of items) {
@@ -356,6 +362,18 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
           kind: "blocked-by", subject: `issue:${n}`, title,
           reason: `Depends on open ${c.reason.slice("blocked-by:".length)}; it is picked up once they close.`,
           action: "Nothing to do unless the dependency is wrong in the issue body.", url,
+        });
+      } else if (c.reason?.startsWith("retry-after:")) {
+        add({
+          kind: "backoff", subject: `issue:${n}`, title,
+          reason: `Its last run failed; the tick retries at ${c.reason.slice("retry-after:".length)} (1 failure: 60 min, 2: 180 min, 3 in 24 h: stop).`,
+          action: `Nothing to do unless you want it now: gh workflow run ${agent}.yml -f issue=${n}`, url,
+        });
+      } else if (c.reason?.startsWith("failure-cap:")) {
+        add({
+          kind: "failure-cap", subject: `issue:${n}`, title,
+          reason: `3 or more failed runs in 24 h; the tick stops retrying until ${c.reason.slice("failure-cap:".length)}. Read the failed runs' stop_reason first.`,
+          action: `gh workflow run ${agent}.yml -f issue=${n}`, url,
         });
       }
     }

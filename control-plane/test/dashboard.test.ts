@@ -122,6 +122,25 @@ describe("buildDashboard", () => {
     expect(bugs.gate).toBeNull();
   });
 
+  it("a failed builder run puts the issue in backoff, then at the cap", () => {
+    const openIssues = [issue(107, ["feature", "status:backlog", "risk:low"])];
+    const fail = (id: string, at: string) => run({ id, subject: "issue:107", status: "failed", dispatched_at: at });
+    const one = buildDashboard(input({ openIssues, runs: [fail("a", "2026-11-12T13:15:00Z")] }));
+    const b = one.blocked.find((x) => x.subject === "issue:107" && x.kind === "backoff")!;
+    expect(b.needs_human).toBe(false);
+    expect(b.reason).toContain("2026-11-12T14:15Z");
+    expect(b.action).toBe("Nothing to do unless you want it now: gh workflow run builder.yml -f issue=107");
+    const three = buildDashboard(input({
+      openIssues,
+      runs: [fail("a", "2026-11-12T11:00:00Z"), fail("b", "2026-11-12T12:00:00Z"), fail("c", "2026-11-12T13:15:00Z")],
+    }));
+    const cap = three.blocked.find((x) => x.kind === "failure-cap")!;
+    expect(cap.needs_human).toBe(true);
+    expect(cap.reason).toContain("2026-11-13T11:00Z");
+    expect(cap.action).toBe("gh workflow run builder.yml -f issue=107");
+    expect(three.next.queue.find((q) => q.agent === "builder")!.items[0].reason).toBe("failure-cap:2026-11-13T11:00Z");
+  });
+
   it("a manual rerun that succeeded clears the failed-run of the cron run on the same issue", () => {
     const d = buildDashboard(
       input({
@@ -192,7 +211,7 @@ describe("buildDashboard", () => {
     const dispatched = planTick(state, NOW).find((x) => x.kind === "dispatch") as any;
     expect(dispatched.subject).toBe(`issue:${first.number}`);
     expect(first.number).toBe(9);
-    expect(candidateQueue(state, ["feature", "enhancement"]).map((c) => c.issue.number)).toEqual([9, 2, 4]);
+    expect(candidateQueue(state, ["feature", "enhancement"], NOW).map((c) => c.issue.number)).toEqual([9, 2, 4]);
   });
 });
 

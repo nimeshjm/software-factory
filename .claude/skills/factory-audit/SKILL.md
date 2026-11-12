@@ -31,7 +31,7 @@ Also read the window's factory commits and `git status`: a fix landed yesterday 
 
 For each run that succeeded, confirm its effect landed on GitHub: the apply step's last lines (`opened <PR url>`, `merge-policy: {...}`, `not mergeable: ...`, label edits) must match the issue timeline or PR section. A green run whose apply printed nothing, or whose labels did not change, is a silent failure.
 
-For each run that did not succeed, read the lines before the `##[error]` marker and classify:
+For each run that did not succeed, read the lines at the `##[error]` markers (`harness failed for phase <p>` is followed by a `phase <p> result: stop_reason=... error=...` line with the models and switches, since 2026-11-12) and classify:
 
 | Symptom | Meaning | Action |
 |---|---|---|

@@ -24,6 +24,13 @@ for phase in "${phase_list[@]}"; do
   done
   if [ "$prc" -ne 0 ]; then
     echo "::error::harness failed for phase $phase (exit $prc)"
+    # Say why in the step log, so a dead run can be read without downloading the artifact.
+    rj="out/phases/$phase/result.json"
+    if [ -f "$rj" ]; then
+      echo "::error::phase $phase result: $(jq -r '"stop_reason=\(.stop_reason // "?") model_calls=\(.model_calls // 0) total_tokens=\(.usage.total_tokens // 0) models=\((.model_ids_used // []) | join(",")) switches=\((.model_switches // []) | map("\(.from)>\(.to) (\(.reason))") | join(", ")) error=\(.error // "")"' "$rj")"
+    else
+      echo "::error::phase $phase wrote no result.json"
+    fi
     rc=$prc
     break
   fi

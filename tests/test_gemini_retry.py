@@ -1,11 +1,13 @@
 import asyncio
+import json
 
+import httpx
 import pytest
 from google.genai import errors as genai_errors
 from strands.models.gemini import GeminiModel
 from strands.types.exceptions import ModelThrottledException
 
-from factory.gemini import FactoryGeminiModel, is_daily_quota_error, is_retryable_server_error
+from factory.gemini import FactoryGeminiModel, is_daily_quota_error, is_retryable_server_error, unresponsive_reason
 
 
 def _server_error(code: int, status: str) -> genai_errors.ServerError:
@@ -149,3 +151,104 @@ def test_switch_counts_as_model_call_not_throttle():
     q = QuotaGuard(5, GuardLog())
     q.extra_call()
     assert (q.calls, q.throttles) == (1, 0)
+
+
+def _read_error() -> httpx.ReadError:
+    return httpx.ReadError("connection reset")
+
+
+def test_two_throttles_switch_and_resend(monkeypatch, capsys):
+    model, used = _fallback_model(monkeypatch, [_quota_error(MINUTE), _quota_error(MINUTE), None], ["b"])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert model.unresponsive_calls == 1 and model.model_switches == []
+    assert _drain(model) == [{"ok": True}]
+    assert used == ["a", "a", "b"] and model.model_ids_used == ["a", "b"]
+    assert model.model_switches == [{"from": "a", "to": "b", "reason": "unresponsive:throttled"}]
+    assert model.unresponsive_calls == 0
+    assert "[model] a unresponsive (throttled); switching to b" in capsys.readouterr().err
+
+
+def test_single_throttle_raises_without_switching(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_quota_error(MINUTE)], ["b"])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert used == ["a"] and model.unresponsive_calls == 1 and model.model_switches == []
+
+
+def test_content_event_resets_counter(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_quota_error(MINUTE), None, _quota_error(MINUTE)], ["b"])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert _drain(model) == [{"ok": True}] and model.unresponsive_calls == 0
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert used == ["a", "a", "a"] and model.model_switches == [] and model.unresponsive_calls == 1
+
+
+def test_transport_error_twice_switches(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_read_error(), _read_error(), None], ["b"])
+    with pytest.raises(ModelThrottledException, match="ReadError"):
+        _drain(model)
+    assert _drain(model) == [{"ok": True}]
+    assert used == ["a", "a", "b"]
+    assert model.model_switches == [{"from": "a", "to": "b", "reason": "unresponsive:transport_error"}]
+
+
+def test_503_twice_switches(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_server_error(503, "UNAVAILABLE")] * 2 + [None], ["b"])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert _drain(model) == [{"ok": True}]
+    assert model.model_switches[0]["reason"] == "unresponsive:server_error"
+
+
+def test_stall_times_out_then_switches(monkeypatch):
+    used = []
+
+    async def stalls(self, *a, **k):
+        used.append(self.config["model_id"])
+        yield {"messageStart": {"role": "assistant"}}
+        if len(used) <= 2:
+            await asyncio.sleep(10)
+        yield {"ok": True}
+
+    monkeypatch.setattr(GeminiModel, "stream", stalls)
+    model = FactoryGeminiModel(client_args={"api_key": "x"}, model_id="a", fallback_model_ids=["b"],
+                               first_event_timeout_s=0.05)
+    with pytest.raises(ModelThrottledException, match="no response within"):
+        _drain(model)
+    assert model.unresponsive_calls == 1
+    assert _drain(model) == [{"messageStart": {"role": "assistant"}}, {"ok": True}]
+    assert used == ["a", "a", "b"]
+    assert model.model_switches == [{"from": "a", "to": "b", "reason": "unresponsive:stall"}]
+
+
+def test_no_fallbacks_left_raises_after_threshold(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_quota_error(MINUTE)] * 3, [])
+    for _ in range(3):
+        with pytest.raises(ModelThrottledException):
+            _drain(model)
+    assert used == ["a"] * 3 and model.model_switches == [] and model.unresponsive_calls == 3
+
+
+def test_daily_quota_records_switch_reason(monkeypatch):
+    model, _ = _fallback_model(monkeypatch, [_quota_error(DAILY), None], ["b"])
+    assert _drain(model) == [{"ok": True}]
+    assert model.model_switches == [{"from": "a", "to": "b", "reason": "daily_quota"}]
+
+
+def test_unresponsive_reason():
+    assert unresponsive_reason(_quota_error(MINUTE)) == "throttled"
+    assert unresponsive_reason(_quota_error(DAILY)) is None
+    assert unresponsive_reason(_server_error(503, "UNAVAILABLE")) == "server_error"
+    assert unresponsive_reason(_read_error()) == "transport_error"
+    assert unresponsive_reason(ValueError("x")) is None
+
+
+def test_model_switch_serialises_with_from_key():
+    from factory.schemas import RunResult
+
+    r = RunResult(run_id="r1", agent="builder", phase="plan", success=True, stop_reason="end_turn",
+                  model_switches=[{"from": "a", "to": "b", "reason": "daily_quota"}])
+    assert json.loads(r.model_dump_json())["model_switches"] == [{"from": "a", "to": "b", "reason": "daily_quota"}]
