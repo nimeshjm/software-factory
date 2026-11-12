@@ -2,7 +2,14 @@
 
 Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-02 15:50 UTC (security-triage live, two problems found). Everything below is the state at that time.
 
-## Do next (checked 2026-11-02 15:50 UTC)
+## Do next (checked 2026-11-12 10:30 UTC)
+
+**Approval trigger (built 2026-11-12, uncommitted at the time of writing).** The control plane now dispatches the reviewer when a human submits an `APPROVED` review (`control-plane/src/webhooks.ts`, `mapEvent` and `debounceWindowMs`), so a `lit` PR merges once you approve it. Two owner steps make it live:
+1. Push `main`: CI deploys the Worker.
+2. Subscribe the target hook to the event: `gh api repos/nimeshjm/fantasy-football/hooks/704460903 -X PATCH -f 'add_events[]=pull_request_review'`.
+Then either merge PR 126 yourself (`gh pr merge 126 -R nimeshjm/fantasy-football --squash`) or re-approve it to exercise the new path. Until 118 closes, `bugs_first` keeps the builder off 107 and 125. The `factory-audit` skill (`.claude/skills/factory-audit/`) is the way to check the next day: it flags an approved-but-unmerged `lit` PR as a `STALL:` line.
+
+**Earlier state (checked 2026-11-02 15:50 UTC), kept for the history of 107 and 118.**
 
 **State on Monday afternoon.** Security-triage is live and ran on its own at 06:00 UTC on 2026-10-31, 11-01 and 11-02 (runs 41174823542, 41279077141, 41397294396), one flash-lite call each. The first run created issues 118 to 121 on fantasy-football; the next two recognised all four alerts as tracked and proposed nothing, so dedup works. Issue 107 is still `status:in-progress`, untouched; flash quota is fresh (no builder run since Friday's dry run). Two problems block the plan below, so fix them first.
 
@@ -147,7 +154,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 - **GitHub App** `software-factory-agent-bot` (id 5514689), installed on both repos.
 - **Repo secrets:** `GEMINI_API_KEY` (dedicated Google Cloud project `gen-lang-client-0040576374`), `FACTORY_APP_ID`, `FACTORY_APP_PRIVATE_KEY`, `HONEYCOMB_API_KEY`, `HONEYCOMB_QUERY_KEY` (unused), `SMOKE_AUTH_TOKEN`, `FACTORY_TOKEN`, `TAVILY_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 - **Repo variables:** `FACTORY_URL`, `TARGET_BASE_URL`.
-- **Worker:** secret `ALERT_WEBHOOK_URL` points at Discord; the target webhook is registered for `issues, pull_request, check_suite, workflow_run`.
+- **Worker:** secret `ALERT_WEBHOOK_URL` points at Discord; the target webhook (id 704460903) is registered for `issues, pull_request, check_suite, workflow_run, code_scanning_alert, dependabot_alert`. `pull_request_review` must be added by hand (owner step, see Do next) for the approval trigger built on 2026-11-12.
 - **Target:** has the label set, squash-only merges and a `main` ruleset.
 - **To rotate the Cloudflare token:** put it in `.env`, then run `sed -n 's/^CLOUDFLARE_API_TOKEN=//p' .env | tr -d '\r\n"' | gh secret set CLOUDFLARE_API_TOKEN`.
 
@@ -186,7 +193,8 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 **Merge and review**
 - **The reviewer does not notice deleted tests.** PR 126 (bug-fixer rerun on 118) removed the existing "rate limits back-to-back probes" test and added none for the new error path, yet `coverage` and `plan_drift` passed and the verdict was approve. The first attempt (`backup/118-attempt1-504`) had the right test file. Check test diffs by hand on `lit` PRs; a deterministic check (fail `coverage` when a `test/**` diff removes more `it(` blocks than it adds) would catch it.
 - **Dependabot:** at most one merge per reviewer run, cron-triggered only. `wrangler` and `@cloudflare/*` bumps are always lit (`lit_dependencies`). The merge-policy trigger is inferred from the PR author.
-- **Review debounce:** reviews are debounced per PR for 5 minutes, so a push during an in-flight review may leave that review covering the older commit.
+- **Review debounce:** reviews are debounced per PR for 5 minutes, so a push during an in-flight review may leave that review covering the older commit. A human approval (`pull_request_review` `submitted`, since 2026-11-12) skips that window and only waits for an in-flight review of the same PR.
+- **Approved lit PRs used to sit:** until 2026-11-12 nothing re-ran the reviewer after a human approval, so PR 126 stayed open with two approvals, green checks and a resolved thread while `bugs_first` kept the builder off 107 and 125. The control plane now maps approvals to a reviewer run; the hook still needs the event added (Do next).
 
 **Platform**
 - **Honeycomb reads:** stays `enabled: false` in the target profile. The Query Data API is Enterprise-only, so liveness and error polling can't work on the free plan; the verifier falls back to smoke checks and the incident responder emits nothing. Ingest works (EU region). To restore reads, port `scripts/honeycomb-query.sh` and `factory/tools/honeycomb.py` to the Honeycomb MCP server (all plans).
@@ -211,6 +219,8 @@ Plan A (spikes and web research) shipped on 2026-10-29. Plan B (security finding
 ## Claude Code tooling for working on the factory
 
 For developing this repo (not the factory's runtime agents, which stay Strands + Gemini), the `factory-orchestrate` skill (`.claude/skills/`) drives a change from the main Opus session. It delegates read-only research to the `factory-researcher` subagent (Fable) and scoped work packages to `factory-implementer` (Sonnet) (`.claude/agents/`). Review the implementer's diff yourself: its tests have missed real-API behaviour (the `messageStart` ordering), and one report came back empty. Deploys, workflow dispatches, secrets and target merges stay with the owner.
+
+The `factory-audit` skill (`.claude/skills/factory-audit/`) is the read-only daily check: `collect.sh --hours 24` gathers the window's runs, their `result.json` artifacts, `/status`, and the target's issue and PR movement into one report, and the skill verifies each item of `## Do next` against that evidence and lists the stalls the tick cannot see (an approved `lit` PR nobody merges, an in-progress issue with no run, a lost in-flight run). Added 2026-11-12.
 
 ## How to work on it
 

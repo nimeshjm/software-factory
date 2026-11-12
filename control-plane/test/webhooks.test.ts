@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SECURITY_DEBOUNCE_MS, hmacHex, isDebounced, isDroppedSender, mapEvent, verifySignature } from "../src/webhooks";
+import { DEBOUNCE_MS, SECURITY_DEBOUNCE_MS, debounceWindowMs, hmacHex, isDebounced, isDroppedSender, mapEvent, verifySignature } from "../src/webhooks";
 
 const T = "acme/widgets";
 const DEPLOY = { workflowName: "Ship it", branch: "trunk" };
@@ -50,6 +50,32 @@ describe("webhooks", () => {
     expect(mapEvent("workflow_run", wr({ name: "CI" }), T, DEPLOY)).toEqual([]);
     expect(mapEvent("workflow_run", wr({ head_branch: "dev" }), T, DEPLOY)).toEqual([]);
     expect(mapEvent("issues", { action: "opened", issue: { number: 4 }, repository: { full_name: "x/y" } }, T, DEPLOY)).toEqual([]);
+  });
+  it("maps a submitted human approval to the reviewer, and nothing else from reviews", () => {
+    const repository = { full_name: T };
+    const review = (state: string, action = "submitted") => ({ action, repository, pull_request: { number: 126 }, review: { state }, sender: { login: "alice" } });
+    expect(mapEvent("pull_request_review", review("approved"), T, DEPLOY)).toEqual([
+      { agent: "reviewer", subject: "pr:126", phase: "review", issue: "", pr: "126" }]);
+    expect(mapEvent("pull_request_review", review("APPROVED"), T, DEPLOY)[0].subject).toBe("pr:126");
+    expect(mapEvent("pull_request_review", review("commented"), T, DEPLOY)).toEqual([]);
+    expect(mapEvent("pull_request_review", review("changes_requested"), T, DEPLOY)).toEqual([]);
+    expect(mapEvent("pull_request_review", review("approved", "dismissed"), T, DEPLOY)).toEqual([]);
+    expect(mapEvent("pull_request_review", review("approved", "edited"), T, DEPLOY)).toEqual([]);
+    expect(mapEvent("pull_request_review", { action: "submitted", repository, review: { state: "approved" } }, T, DEPLOY)).toEqual([]);
+    // A bot's approval is dropped before mapping, like any other bot-sent event.
+    expect(isDroppedSender("pull_request_review", { sender: { login: "software-factory-agent-bot[bot]" } })).toBe(true);
+    expect(isDroppedSender("pull_request_review", { sender: { login: "alice" } })).toBe(false);
+  });
+  it("debounces an approval only against an in-flight run", () => {
+    expect(debounceWindowMs("reviewer", "pull_request")).toBe(DEBOUNCE_MS);
+    expect(debounceWindowMs("reviewer", "check_suite")).toBe(DEBOUNCE_MS);
+    expect(debounceWindowMs("reviewer", "pull_request_review")).toBe(0);
+    expect(debounceWindowMs("security-triage", "dependabot_alert")).toBe(SECURITY_DEBOUNCE_MS);
+    const now = new Date("2026-10-21T10:00:00Z");
+    const w = debounceWindowMs("reviewer", "pull_request_review");
+    expect(isDebounced([{ status: "started", finished_at: null }], now, w)).toBe(true);
+    expect(isDebounced([{ status: "dispatched", finished_at: null }], now, w)).toBe(true);
+    expect(isDebounced([{ status: "success", finished_at: "2026-10-21T09:59:30Z" }], now, w)).toBe(false);
   });
   it("verifier trigger follows the configured workflow name and branch", () => {
     const repository = { full_name: T };

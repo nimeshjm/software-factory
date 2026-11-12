@@ -50,6 +50,13 @@ export function mapEvent(event: string, payload: any, targetRepo: string, deploy
     const n = payload.pull_request.number;
     return [{ agent: "reviewer", subject: `pr:${n}`, phase: "review", issue: "", pr: String(n) }];
   }
+  // A human approval is what makes a lit PR mergeable; nothing else re-runs the reviewer after it.
+  // Bot approvals never reach here (isDroppedSender), matching the merge policy, which ignores them.
+  if (event === "pull_request_review" && action === "submitted" && payload.pull_request?.number) {
+    if (String(payload.review?.state ?? "").toLowerCase() !== "approved") return [];
+    const n = payload.pull_request.number;
+    return [{ agent: "reviewer", subject: `pr:${n}`, phase: "review", issue: "", pr: String(n) }];
+  }
   if (event === "check_suite" && action === "completed") {
     const prs: any[] = payload.check_suite?.pull_requests ?? [];
     return prs.slice(0, 1).map((p) => ({ agent: "reviewer", subject: `pr:${p.number}`, phase: "review", issue: "", pr: String(p.number) }));
@@ -68,6 +75,12 @@ export function mapEvent(event: string, payload: any, targetRepo: string, deploy
     return [{ agent: "security-triage", subject: "security", phase: "triage", issue: "", pr: "" }];
   }
   return [];
+}
+
+/** The debounce window for an intent: reviewer 5 min, security-triage 60 min, and 0 for an approval (in-flight runs only), so a human approval is never dropped. */
+export function debounceWindowMs(agent: string, event: string): number {
+  if (agent === "reviewer") return event === "pull_request_review" ? 0 : DEBOUNCE_MS;
+  return SECURITY_DEBOUNCE_MS;
 }
 
 /** Pure: true when a run for the subject is in flight or finished within the window (reviewer 5 min, security-triage 60 min). */
@@ -120,7 +133,7 @@ export async function handleWebhook(req: Request, env: Env, ctx: ExecutionContex
           const { results } = await env.DB.prepare("SELECT status, finished_at FROM runs WHERE agent = ? AND subject = ? ORDER BY dispatched_at DESC LIMIT 5")
             .bind(it.agent, it.subject)
             .all<{ status: string; finished_at: string | null }>();
-          debounced = isDebounced(results ?? [], now, it.agent === "reviewer" ? DEBOUNCE_MS : SECURITY_DEBOUNCE_MS);
+          debounced = isDebounced(results ?? [], now, debounceWindowMs(it.agent, event));
         }
         if (debounced) o.skipped = "debounced";
         else {

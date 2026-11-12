@@ -29,7 +29,7 @@ Then, in the software-factory repo:
 8. Secrets and variables on the software-factory repo: variable `TARGET_BASE_URL` (deployed target, no trailing slash); secret `SMOKE_AUTH_TOKEN` (the token the version endpoint expects; leave unset if it is public or `smoke.version` is null); optional secret `TAVILY_API_KEY` for `web_search`.
 9. Install the GitHub App (`factory.app_slug` in `factory.config.json`, currently `software-factory-agent-bot`) on the target repo, then apply the repo settings below.
 10. Push the factory change to `main`. CI then checks config sync, redeploys the control plane with the new target vars, and creates or updates the labels on the target (`sync-labels` job running `scripts/preflight-labels.sh`; you can also run that script by hand).
-11. Register the target webhook for `issues`, `pull_request`, `check_suite` and `workflow_run` on the control plane's `/webhooks/github` URL (command in `control-plane/README.md`).
+11. Register the target webhook for `issues`, `pull_request`, `pull_request_review`, `check_suite`, `workflow_run`, `code_scanning_alert` and `dependabot_alert` on the control plane's `/webhooks/github` URL (command in `control-plane/README.md`).
 12. Graduate each agent before the cron relies on it: `gh workflow run <agent>.yml -f dry_run=true ...` (triage, reviewer on a Dependabot PR, verifier, builder on a `risk:low size:S` issue, bug-fixer), then live once. `POST /admin/pause` on the control plane stops all dispatching while you do this.
 
 ## Repo settings (`gh api`)

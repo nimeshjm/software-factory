@@ -33,16 +33,19 @@ gh api repos/<owner>/<target>/hooks -X POST \
   -f name=web -F active=true \
   -f 'config[url]=https://factory-control-plane.<subdomain>.workers.dev/webhooks/github' \
   -f 'config[content_type]=json' -f "config[secret]=$GITHUB_WEBHOOK_SECRET" \
-  -f 'events[]=issues' -f 'events[]=pull_request' -f 'events[]=check_suite' -f 'events[]=workflow_run' \
+  -f 'events[]=issues' -f 'events[]=pull_request' -f 'events[]=pull_request_review' \
+  -f 'events[]=check_suite' -f 'events[]=workflow_run' \
   -f 'events[]=code_scanning_alert' -f 'events[]=dependabot_alert'
 ```
 
-For an existing hook, add the security events without replacing the list (`events` replaces the array, `add_events` appends):
+For an existing hook, add events without replacing the list (`events` replaces the array, `add_events` appends):
 
 ```bash
 gh api repos/<owner>/<target>/hooks/<hook_id> -X PATCH \
-  -f 'add_events[]=code_scanning_alert' -f 'add_events[]=dependabot_alert'
+  -f 'add_events[]=pull_request_review' -f 'add_events[]=code_scanning_alert' -f 'add_events[]=dependabot_alert'
 ```
+
+A human `APPROVED` review (`pull_request_review` `submitted`) dispatches the reviewer on that PR, so a `lit` PR merges once a human approves it without waiting for a push or a check suite. Other review states are ignored, bot reviews are dropped like every other bot-sent event, and the approval skips the 5-minute review debounce (it still waits for an in-flight review of the same PR to finish; the per-subject lock covers that).
 
 The security-triage agent runs once a day in the 06:00 UTC tick (alongside the incident responder) and on a new code-scanning or Dependabot alert, at most one webhook-triggered run per 60 minutes.
 
