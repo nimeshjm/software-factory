@@ -164,3 +164,20 @@ def test_branch_command_is_deterministic(tmp_path, capsys):
     assert capsys.readouterr().out.strip() == "feat/104-document-get-version-in-the-readme"
     assert policy_main(["branch", "--agent", "bug-fixer", "--issue", str(f)]) == 0
     assert capsys.readouterr().out.strip().startswith("fix/104-")
+
+
+def test_merge_with_amigos(factory_cfg):
+    files = [{"path": "src/index.py", "additions": 5, "deletions": 1}]
+    cfg = {**factory_cfg, "amigos": {"product": ["Maintainer"], "development": [], "testing": ["tess"]}}
+
+    def decide(reviews, author="factory-bot[bot]", cfg=cfg):
+        return merge_policy(_pr(files=files, author=author, reviews=reviews), cfg, ["src/index.py"], False, "pull_request")
+
+    assert decide([{"author": "maintainer", "state": "APPROVED"}]).merge
+    assert decide([{"author": "TESS", "state": "APPROVED"}]).merge
+    d = decide([{"author": "stranger", "state": "APPROVED"}])
+    assert not d.merge and d.reasons == ["autonomy:lit requires an APPROVED review from a named amigo"]
+    assert not decide([{"author": "maintainer", "state": "APPROVED"}], author="maintainer").merge
+    assert not decide([{"author": "tess[bot]", "state": "APPROVED"}]).merge
+    assert decide([{"author": "stranger", "state": "APPROVED"}], cfg=factory_cfg).merge
+    assert decide([], cfg=factory_cfg).reasons == ["autonomy:lit requires a human APPROVED review"]

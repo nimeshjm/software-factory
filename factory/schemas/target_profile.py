@@ -23,6 +23,7 @@ class _P(BaseModel):
 class Limits(_P):
     max_diff_lines: int = Field(300, ge=1)
     max_diff_files: int = Field(8, ge=1)
+    max_context_chars: int = Field(60000, ge=1000)
 
 
 class Runtime(_P):
@@ -143,6 +144,58 @@ class Web(_P):
     _check_hosts = field_validator("allowed_hosts")(_hostnames)
 
 
+_LOGIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$")
+ROLES = ("product", "development", "testing")
+
+
+def _logins(logins: list[str]) -> list[str]:
+    out: list[str] = []
+    for raw in logins:
+        login = raw.strip().lower().lstrip("@")
+        if not _LOGIN_RE.match(login):
+            raise ValueError(f"invalid GitHub login {raw!r}")
+        if login not in out:
+            out.append(login)
+    return out
+
+
+class Amigos(_P):
+    product: Annotated[list[Str], Field(max_length=10)] = Field(default_factory=list)
+    development: Annotated[list[Str], Field(max_length=10)] = Field(default_factory=list)
+    testing: Annotated[list[Str], Field(max_length=10)] = Field(default_factory=list)
+
+    _check_logins = field_validator("product", "development", "testing", mode="after")(_logins)
+
+    def all(self) -> list[str]:
+        """Distinct logins in role order."""
+        out: list[str] = []
+        for role in ROLES:
+            out += [x for x in getattr(self, role) if x not in out]
+        return out
+
+    def two_hats(self) -> dict[str, list[str]]:
+        """Logins named in two or more roles, with those roles."""
+        roles = {x: [r for r in ROLES if x in getattr(self, r)] for x in self.all()}
+        return {x: rs for x, rs in roles.items() if len(rs) > 1}
+
+
+_FORBIDDEN_HOLD = {"plan:approved", "needs-human"}
+
+
+class PlanReview(_P):
+    hold_on: Annotated[list[Str], Field(max_length=20)] = Field(default_factory=lambda: ["risk:high"])
+
+    @field_validator("hold_on")
+    @classmethod
+    def _check_hold_on(cls, labels: list[str]) -> list[str]:
+        for x in labels:
+            if not x.strip():
+                raise ValueError("hold_on entries must be non-empty label names")
+            if x in _FORBIDDEN_HOLD or x.startswith("status:"):
+                raise ValueError(f"{x!r} cannot be a plan_review.hold_on label")
+        return labels
+
+
 class TargetProfile(_P):
     dark_paths: StrList = Field(default_factory=list)
     lit_dependencies: StrList = Field(default_factory=list)
@@ -157,6 +210,8 @@ class TargetProfile(_P):
     deploy: Deploy = Field(default_factory=Deploy)
     honeycomb: HoneycombProfile = Field(default_factory=HoneycombProfile)
     web: Web = Field(default_factory=Web)
+    amigos: Amigos = Field(default_factory=Amigos)
+    plan_review: PlanReview = Field(default_factory=PlanReview)
 
     @model_validator(mode="before")
     @classmethod

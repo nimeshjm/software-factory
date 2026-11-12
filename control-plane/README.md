@@ -83,7 +83,7 @@ curl -s $FACTORY_URL/status | jq
   "last_tick": {
     "at": "2026-10-28T23:00:36.100Z",
     "decisions": [
-      { "kind": "skip", "agent": "builder", "reason": "no_eligible_feature (#35:awaiting-risk-or-plan-approval, #100:author-not-trusted)" }
+      { "kind": "skip", "agent": "builder", "reason": "no_eligible_feature (#35:awaiting-risk, #100:author-not-trusted)" }
     ]
   }
 }
@@ -102,7 +102,9 @@ Decision kinds in `last_tick.decisions`:
 
 - `dispatch`: an agent was started; `subject` is `issue:N` for triage, builder and bug-fixer, `dependabot` for the hourly review (the PR number travels in the inputs), or the date for the incident responder.
 - `mark_lost`: a run exceeded its timeout plus grace without reporting `finished`; its reservation is released and the ledger marks it `lost`.
-- `skip`: the agent was considered and not started. `reason` is one of `in_flight` (that agent already has a run), `no_spec`, `quota`, `backpressure` (open factory PRs at `MAX_OPEN_FACTORY_PRS`), `bugs_first` (a priority 1 or 2 bug without `needs-human` is open, so the builder waits; a bug parked on a human does not block features), or `no_eligible_feature (...)` / `no_eligible_bug (...)` listing every backlog candidate with why it was passed over: `has-open-pr`, `needs-human`, `author-not-trusted` (author is not a collaborator and the issue lacks `factory:accepted`), `blocked-by:#N` (an open `Depends on` issue), or `awaiting-risk-or-plan-approval` (not `risk:low` and no `plan:approved`). The list is capped at 10 entries with `+N more`.
+- `skip`: the agent was considered and not started. `reason` is one of `in_flight` (that agent already has a run), `no_spec`, `quota`, `backpressure` (open factory PRs at `MAX_OPEN_FACTORY_PRS`), `bugs_first` (a priority 1 or 2 bug without `needs-human` is open, so the builder waits; a bug parked on a human does not block features), or `no_eligible_feature (...)` / `no_eligible_bug (...)` listing every candidate with why it was passed over: `has-open-pr`, `needs-human`, `author-not-trusted` (author is not a collaborator and the issue lacks `factory:accepted`), `blocked-by:#N` (an open `Depends on` issue), or `awaiting-risk` (neither `risk:low` nor `risk:high`). The list is capped at 10 entries with `+N more`.
+
+Candidates for the bug-fixer and builder are open issues of the right type labelled `status:backlog`, plus those labelled `status:plan-review` and `plan:approved` (a human approved the plan, so the agent resumes with phase `""`). A `risk:high` feature is dispatched without `plan:approved`; the pipeline stops after the plan.
 
 An agent absent from the decisions was not a candidate on that tick (nothing in its backlog, or it runs on a schedule such as the hourly Dependabot review and the daily incident responder).
 

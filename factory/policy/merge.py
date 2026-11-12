@@ -23,6 +23,14 @@ def _bumped_deps(pr: dict[str, Any]) -> list[str]:
     return [m.group(1)] if m else []
 
 
+def amigo_logins(factory_cfg: dict[str, Any]) -> set[str]:
+    """Lowercased logins named in the profile's amigos section; empty when none."""
+    section = factory_cfg.get("amigos")
+    if not isinstance(section, dict):
+        return set()
+    return {str(x).lower() for role in ("product", "development", "testing") for x in section.get(role) or []}
+
+
 def merge_policy(pr: dict[str, Any], factory_cfg: dict[str, Any], plan_files: list[str] | None,
                  is_dependabot: bool, trigger: str) -> MergeDecision:
     blockers: list[str] = []
@@ -74,13 +82,16 @@ def merge_policy(pr: dict[str, Any], factory_cfg: dict[str, Any], plan_files: li
     deps = _bumped_deps(pr) if is_dependabot else []
     # Dependency-only Dependabot bumps are dark only when the profile sets dark_dependency_bumps (see classify_autonomy).
     autonomy = classify_autonomy(files, factory_cfg, deps)
+    amigos = amigo_logins(factory_cfg)
     human_approved = any(
         r.get("state") == "APPROVED" and not str(r.get("author", "")).endswith("[bot]")
         and r.get("author") != pr.get("author")
+        and (not amigos or str(r.get("author", "")).lower() in amigos)
         for r in pr.get("reviews") or []
     )
     if autonomy != "dark" and not human_approved:
-        blockers.append("autonomy:lit requires a human APPROVED review")
+        blockers.append("autonomy:lit requires an APPROVED review from a named amigo" if amigos
+                        else "autonomy:lit requires a human APPROVED review")
 
     if blockers:
         return MergeDecision(False, blockers)

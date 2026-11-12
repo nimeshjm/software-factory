@@ -14,6 +14,14 @@ dark_dependency_bumps: true
 limits:
   max_diff_lines: 300
   max_diff_files: 8
+  max_context_chars: 60000
+# One owner holds all three hats; written down so the testing role does not silently default to the agent.
+amigos:
+  product: [nimeshjm]
+  development: [nimeshjm]
+  testing: [nimeshjm]
+plan_review:
+  hold_on: ["risk:high"]
 toolchain:
   runtime:
     node: "24"

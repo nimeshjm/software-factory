@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-phases.sh: run the harness for each phase in $PHASES. Runs with a minimal env (no GitHub token).
-# Stops after plan when plan.needs_human or the issue is risk:high without plan:approved.
+# Stops after plan when `factory.policy plan-gate` says hold (needs_human, or a hold_on label without plan:approved).
 set -euo pipefail
 
 AGENT="${AGENT:?}"
@@ -30,14 +30,13 @@ for phase in "${phase_list[@]}"; do
   ok+=("$phase")
   echo "${ok[*]}" >out/phases_ok.txt
   if [ "$phase" = "plan" ] && { [ "$AGENT" = builder ] || [ "$AGENT" = bug-fixer ]; }; then
-    needs_human="$(jq -r '.needs_human // false' out/proposal.json)"
-    risk_high=false; approved=false
-    if [ -f inputs/issue.json ]; then
-      risk_high="$(jq -r 'any(.labels[]; . == "risk:high")' inputs/issue.json)"
-      approved="$(jq -r 'any(.labels[]; . == "plan:approved")' inputs/issue.json)"
-    fi
-    if [ "$needs_human" = "true" ] || { [ "$risk_high" = "true" ] && [ "$approved" != "true" ]; }; then
-      echo "::notice::stopping after plan (needs_human=$needs_human risk_high=$risk_high approved=$approved)"
+    issue=()
+    if [ -f inputs/issue.json ]; then issue=(--issue inputs/issue.json); fi
+    gate="$(uv run --frozen python -m factory.policy plan-gate ${issue[@]+"${issue[@]}"} --factory inputs/factory.json --plan out/proposal.json)" || {
+      echo "::error::plan-gate failed"; rc=1; break
+    }
+    if [ "$(jq -r '.hold' <<<"$gate")" = "true" ]; then
+      echo "::notice::stopping after plan (held: $(jq -r '.reasons | join(", ")' <<<"$gate"))"
       break
     fi
   fi

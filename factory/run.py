@@ -49,6 +49,18 @@ def _write(out: Path, name: str, text: str) -> None:
     (out / name).write_text(text, encoding="utf-8")
 
 
+def _context_oversize(ctx: Path, limit: int) -> str | None:
+    """One line per context file plus total and limit when inputs/context exceeds the budget, else None."""
+    if not ctx.is_dir():
+        return None
+    sizes = [(f.relative_to(ctx).as_posix(), len(f.read_text(encoding="utf-8", errors="replace")))
+             for f in sorted(ctx.rglob("*")) if f.is_file()]
+    total = sum(n for _, n in sizes)
+    if total <= limit:
+        return None
+    return "; ".join([*(f"{name} {n}" for name, n in sizes), f"total {total} > {limit}"])
+
+
 def _security_no_inputs(inputs: Path) -> str | None:
     """Error text when no security feed is readable (file missing, unparseable or every feed unavailable), else None."""
     names = ("code_scanning", "dependabot", "secret_scanning")
@@ -96,6 +108,11 @@ def run(args: argparse.Namespace) -> int:
                 result.stop_reason = "no_inputs"
                 result.error = redact(no_inputs)[:1000]
                 return 1
+        oversize = _context_oversize(inputs / "context", profile.limits.max_context_chars)
+        if oversize:
+            result.stop_reason = "context_oversize"
+            result.error = redact(oversize)[:1000]
+            return 1
         set_profile(profile)
         spec = apply_spike_model(cfg, resolve_run_spec(cfg, args.agent, args.phase), issue_labels(inputs))
         model_cls = proposal_model_for(args.agent, args.phase)

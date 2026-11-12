@@ -116,6 +116,41 @@ def _validate_profile(args: list[str]) -> int:
     return 0
 
 
+def _check_context(args: list[str]) -> int:
+    import argparse
+
+    from fnmatch import fnmatchcase
+
+    ap = argparse.ArgumentParser(prog="python -m factory.schemas check-context")
+    ap.add_argument("--profile", required=True)
+    ap.add_argument("--root", required=True)
+    ns = ap.parse_args(args)
+    try:
+        with open(ns.profile, encoding="utf-8") as fh:
+            profile = TargetProfile.model_validate(json.load(fh))
+    except Exception as exc:  # noqa: BLE001 - report any failure as invalid
+        sys.stderr.write(f"invalid profile {ns.profile}: {exc}\n")
+        return 1
+    root = Path(ns.root)
+    rows: list[tuple[str, int]] = []
+    skip = {".git", "node_modules", ".venv"}
+    for f in sorted(p for p in root.rglob("*") if p.is_file()):
+        rel = f.relative_to(root).as_posix()
+        if skip & set(rel.split("/")[:-1]):
+            continue
+        # Match the repo-relative path only, as gather-inputs.sh does (`case "$f" in $pat`); the basename
+        # fallback in prompts._context_files is for ordering copies that live flat under inputs/context/.
+        if any(fnmatchcase(rel, g) for g in profile.context_files):
+            rows.append((rel, len(f.read_text(encoding="utf-8"))))
+    total, limit = sum(n for _, n in rows), profile.limits.max_context_chars
+    ok = total <= limit
+    stream = sys.stdout if ok else sys.stderr
+    for rel, n in rows:
+        stream.write(f"{rel} {n}\n")
+    stream.write(f"total {total} {'<=' if ok else '>'} {limit}\n")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI. ``dump [out_dir]`` writes schemas; ``validate --agent A --phase P --file F`` checks a proposal."""
     import argparse
@@ -137,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args and args[0] == "validate-profile":
         return _validate_profile(args[1:])
+    if args and args[0] == "check-context":
+        return _check_context(args[1:])
     if args and args[0] == "dump":
         args = args[1:]
     dump_schemas(args[0] if args else None)

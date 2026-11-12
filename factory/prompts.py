@@ -91,6 +91,11 @@ def _load(inputs: Path, name: str) -> Any:
     return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
 
 
+def context_glob_matches(rel: str, glob: str) -> bool:
+    """A context glob matches the relative posix path, or the basename when the glob has a directory part."""
+    return fnmatchcase(rel, glob) or fnmatchcase(rel.rsplit("/", 1)[-1], glob.rsplit("/", 1)[-1])
+
+
 def _context_files(ctx: Path, order: list[str]) -> list[Path]:
     """Context files in the profile's context_files order; unmatched files follow, sorted."""
     files = sorted(f for f in ctx.rglob("*") if f.is_file())
@@ -100,7 +105,7 @@ def _context_files(ctx: Path, order: list[str]) -> list[Path]:
         for f in files:
             if f in ordered:
                 continue
-            if fnmatchcase(rels[f], glob) or fnmatchcase(f.name, glob.rsplit("/", 1)[-1]):
+            if context_glob_matches(rels[f], glob):
                 ordered.append(f)
     return ordered + [f for f in files if f not in ordered]
 

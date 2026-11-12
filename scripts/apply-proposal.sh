@@ -133,25 +133,56 @@ apply_triage() {
 }
 
 # ---------------------------------------------------------------- plan (builder, bug-fixer)
+# amigos_footer: one line naming the human amigos from the profile (real @mentions, pipeline text); prints nothing when none are named.
+amigos_footer() {
+  local a
+  a="$(uvpy -m factory.policy amigos --factory "$INPUTS_DIR/factory.json")" || die "amigos failed"
+  jq -r '
+    if .any != true then empty else
+      ([("product", "development", "testing") as $r | select((.[$r] | length) > 0)
+        | $r + " " + ([.[$r][] | "@" + .] | join(", "))] | join(" · "))
+      + (if (.two_hats | length) > 0
+         then " · two hats: " + ([.two_hats | to_entries[] | "@\(.key) (\(.value | join(", ")))"] | join("; "))
+         else "" end)
+    end' <<<"$a"
+}
+
+# plan_gate <plan proposal>: prints {"hold": bool, "reasons": [..]} from the same CLI run-phases.sh uses
+plan_gate() {
+  local issue=()
+  if [ -f "$INPUTS_DIR/issue.json" ]; then issue=(--issue "$INPUTS_DIR/issue.json"); fi
+  uvpy -m factory.policy plan-gate ${issue[@]+"${issue[@]}"} --factory "$INPUTS_DIR/factory.json" --plan "$1"
+}
+
 apply_plan() {
   local f; f="$(proposal_path plan)"; validate_and_guard plan "$f"
   [ -n "$ISSUE" ] || die "plan requires ISSUE"
+  local gate hold needs_human footer
+  gate="$(plan_gate "$f")" || die "plan-gate failed"
+  hold="$(jq -er '.hold | tostring' <<<"$gate")" || die "plan-gate returned '$gate'"
+  needs_human="$(jq -r 'any(.reasons[]; . == "needs_human")' <<<"$gate")"
+  footer="$(amigos_footer)"
   { printf '%s\n' "$PLAN_MARKER"
     jq -r '"<!-- factory:plan-files " + ({files: .files} | tojson) + " -->"' "$f"
-    jq -r '.plan_md' "$f"
+    # The at-a-glance block is pipeline text: real mentions, never model text.
+    jq -r --argjson gate "$gate" --arg amigos "$footer" '
+      def cell: gsub("\n"; " ") | gsub("\\|"; "/");
+      "\n### Plan at a glance\n\n| | |\n|---|---|\n"
+      + "| Steps | \(.steps | length) |\n"
+      + "| Files | \(.files | length)" + (if (.files | length) > 0 then ": " + ([.files[] | "`" + . + "`"] | join(", ") | cell) else "" end) + " |\n"
+      + "| Needs a human | " + (if .needs_human then "yes" + (if (.risk_notes | length) > 0 then ": " + (.risk_notes | join("; ") | cell) else "" end) else "no" end) + " |\n"
+      + "| Gate | " + (if ($gate.hold | not) then "implement follows in this run"
+                       elif any($gate.reasons[]; . == "needs_human") then "held: needs_human; fix the issue, remove needs-human and set status:backlog"
+                       else "held: " + ($gate.reasons | join(", ")) + "; add plan:approved to continue" end) + " |"
+      + (if $amigos != "" then "\n| Amigos | " + $amigos + " |" else "" end) + "\n"' "$f"
+    jq -r '.plan_md' "$f" | sanitize
     printf '\n_Factory run %s_\n' "$RUN_ID"
-  } | sanitize >"$TMP/plan.md"
-  # sanitize leaves the marker intact (no @); ensure the file starts with it
+  } >"$TMP/plan.md"
   upsert_comment "$ISSUE" "$PLAN_MARKER" "$TMP/plan.md"
 
-  local needs_human labels risk_high approved
-  needs_human="$(jq -r '.needs_human' "$f")"
-  labels="$(gh issue view "$ISSUE" --repo "$TARGET_REPO" --json labels --jq '[.labels[].name]')"
-  risk_high="$(jq -r 'any(.[]; . == "risk:high")' <<<"$labels")"
-  approved="$(jq -r 'any(.[]; . == "plan:approved")' <<<"$labels")"
   if [ "$needs_human" = "true" ]; then
     edit_labels issue "$ISSUE" "status:plan-review,needs-human" "status:backlog,status:in-progress"
-  elif [ "$risk_high" = "true" ] && [ "$approved" != "true" ]; then
+  elif [ "$hold" = "true" ]; then
     edit_labels issue "$ISSUE" "status:plan-review" "status:backlog,status:in-progress"
   else
     edit_labels issue "$ISSUE" "status:in-progress" "status:backlog,status:plan-review"
@@ -251,7 +282,7 @@ apply_implement() {
 
 # ---------------------------------------------------------------- reviewer
 post_review() { # <proposal> <head_sha>
-  local f=$1 sha=$2 event body_attempt
+  local f=$1 sha=$2 event body_attempt footer
   event="$(jq -r '{approve: "COMMENT", comment: "COMMENT", needs_human: "COMMENT", request_changes: "REQUEST_CHANGES"}[.verdict]' "$f")"
   jq -r --arg marker "$REVIEW_MARKER" '
     $marker + "\n" + .summary_md
@@ -260,6 +291,11 @@ post_review() { # <proposal> <head_sha>
            + ([.agent_checks[] | "| \(.name) | \(.status) | \(.detail | gsub("\n"; " ") | gsub("\\|"; "/")) |"] | join("\n")) else "" end)
         + (if (.questions_for_human | length) > 0 then "\n\n### Questions for the human\n\n" + ([.questions_for_human[] | "- " + .] | join("\n")) else "" end)
       end)' "$f" | sanitize >"$TMP/review.md"
+  # The footer is pipeline text (real mentions), appended after the model text is sanitised.
+  footer="$(amigos_footer)"
+  if [ -n "$footer" ]; then
+    printf '\n---\n%s\nQuestions for the human are for product and testing; merge of a lit PR needs an APPROVED review from one of these logins.\n' "$footer" >>"$TMP/review.md"
+  fi
   jq -r '.inline_comments[] | "- `\(.path):\(.line)` \(.body)"' "$f" | sanitize >"$TMP/inline.md"
   # Attempt 1: event + inline comments. 2: event, inline in body. 3: COMMENT, inline in body.
   jq -n --rawfile b "$TMP/review.md" --arg e "$event" --arg sha "$sha" --slurpfile p "$f" "$JQ_NOAT"'

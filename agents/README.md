@@ -37,4 +37,6 @@ Consequences for prompt authors:
 - Architect (Product intent): triage, `research.md`, `plan.md` (builder and bug-fixer).
 - Builder (Development direction): `implement.md` (builder and bug-fixer).
 - Reviewer / critic (Testing coherence): reviewer, verifier, incident-responder.
-Humans own the matching gates: issues and `docs/product-spec.md`, plan approval on `risk:high`, `.agents/*` and `factory.yml`, approval of `autonomy:lit` PRs, and the "questions for the human" half of the review.
+Humans own the matching gates: issues and `docs/product-spec.md`, plan approval on the profile's `plan_review.hold_on` labels, `.agents/*` and `factory.yml`, approval of `autonomy:lit` PRs, and the "questions for the human" half of the review. The full boundary is `docs/three-amigos.md`.
+
+Rules that follow for prompt authors: the humans are named in the target profile's `amigos` section and never rendered into a prompt (the pipeline mentions them); the reviewer tags each question for the human with the role it is for (`(product)`, `(development)`, `(testing)`); the plan prompts keep `steps`, `files` and `risk_notes` exact because the pipeline renders the `Plan at a glance` table from them.

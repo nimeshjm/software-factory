@@ -19,6 +19,23 @@ dark_dependency_bumps: false
 limits:
   max_diff_lines: 300
   max_diff_files: 8
+  # Total size of the context files (AGENTS.md, .agents/*.md, docs/product-spec.md) inlined into every prompt.
+  # A run stops before any model call (stop_reason context_oversize) when they exceed it: trim the docs, do not raise this.
+  max_context_chars: 60000
+
+# The human three amigos, as GitHub logins. The pipeline addresses them on plan and review comments; the
+# agents never see them. A login listed under two roles holds two hats: write it down rather than leave
+# the role to default to the coding agent. Empty lists = no footer and any human approval merges a lit PR.
+amigos:
+  product: []               # owns intent: issues, acceptance criteria, docs/product-spec.md, plan:approved
+  development: []           # directs the agents: .agents/*, factory.yml, conventions, approves autonomy:lit PRs
+  testing: []               # guards coherence: answers "Questions for the human", owns the smoke checks
+
+# The architect step is visible before any non-trivial run: an issue carrying any of these labels stops
+# after the plan comment (status:plan-review) until a human adds plan:approved. Add size:L or size:M to
+# review more plans; a plan whose needs_human is true always waits.
+plan_review:
+  hold_on: ["risk:high"]
 
 toolchain:
   # Runtime versions installed on the runner. Any subset; null = not installed.

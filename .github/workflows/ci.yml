@@ -29,6 +29,13 @@ jobs:
             yq -o=json '.' "$f" >"$RUNNER_TEMP/profiles/profile.json"
             uv run --frozen python -m factory.schemas validate-profile --file "$RUNNER_TEMP/profiles/profile.json"
           done
+      - name: check context size
+        run: |
+          mkdir -p "$RUNNER_TEMP/profiles"
+          for d in templates/target examples/fantasy-football; do
+            yq -o=json '.' "$d/factory.yml" >"$RUNNER_TEMP/profiles/profile.json"
+            uv run --frozen python -m factory.schemas check-context --profile "$RUNNER_TEMP/profiles/profile.json" --root "$d"
+          done
 
   control-plane:
     runs-on: ubuntu-latest

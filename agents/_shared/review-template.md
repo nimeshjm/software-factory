@@ -21,17 +21,21 @@ Used by the reviewer agent (fields map to `ReviewProposal`) and rendered by the 
 | telemetry | na | |
 
 ### Questions for the human
-1. Does this belong in module A or in module B? (intent and fit)
-2. ...
+1. (product) Does this belong in module A or in module B?
+2. (testing) ...
 
 ### Verdict
 approve | request_changes | comment | needs_human: one-line reason.
 Merge is decided by policy (CI green, threads resolved, `Closes #N`, within limits, plan files, and `autonomy:dark` or a human APPROVED review), not by this review.
+product @a · development @b · testing @c · two hats: @a (product, development)
+Questions for the human are for product and testing; merge of a lit PR needs an APPROVED review from one of these logins.
 ```
+
+The last two lines are the amigos footer: the pipeline appends it from the target profile's `amigos` section (omitted when none are named). The model never writes it.
 
 ## Rules for filling it
 
 - Agent checks are objective and verifiable: standards, conventions, test coverage, secrets, plan drift, size, CI. A `fail` names `path:line` and the fix. `na` is allowed only when the check cannot apply (for example `plan_drift` on a human PR).
-- Questions for the human are judgment calls a test cannot answer: intent, product fit, "locally correct, globally wrong", simpler alternatives, hidden coupling. 0 to 5 questions, each one sentence. Never restate a failed check as a question.
+- Questions for the human are judgment calls a test cannot answer: intent, product fit, "locally correct, globally wrong", simpler alternatives, hidden coupling. 0 to 5 questions, each one sentence, each prefixed with the human amigo it is for: `(product)` intent and fit, `(development)` direction and alternatives, `(testing)` coherence and hidden coupling. Never restate a failed check as a question.
 - No `@mentions`, no secrets, no quoting more than 3 lines of diff.
 - The verdict is advisory. The reviewer never merges and never approves on a human's behalf.

@@ -4,6 +4,8 @@
   python -m factory.policy merge-policy --pr inputs/pr.json --factory inputs/factory.json \
       [--plan-files out/plan_files.json] --trigger cron|webhook
   python -m factory.policy branch --agent builder|bug-fixer --issue inputs/issue.json
+  python -m factory.policy plan-gate --issue inputs/issue.json --factory inputs/factory.json --plan out/proposal.json
+  python -m factory.policy amigos --factory inputs/factory.json
   python -m factory.policy check-findings --proposal F --results R [R ...]
   python -m factory.policy evidence-table --results R [R ...]
 """
@@ -19,6 +21,7 @@ from .author import slug
 from .autonomy import classify_autonomy
 from .findings import check_findings, evidence_table
 from .merge import _bumped_deps, merge_policy
+from .plan_gate import plan_gate
 
 
 def _load(path: str):
@@ -32,6 +35,15 @@ def _load_result(path: str) -> dict:
         return _load(path)
     except FileNotFoundError:
         return {"tool_calls": []}
+
+
+def _labels_of(path: str) -> list[str]:
+    """Label names from an issue file (strings or {name} objects); empty when absent or unreadable."""
+    try:
+        raw = _load(path).get("labels") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [str(x.get("name") if isinstance(x, dict) else x) for x in raw]
 
 
 def _is_dependabot(pr: dict) -> bool:
@@ -58,7 +70,30 @@ def main(argv: list[str] | None = None) -> int:
     cf.add_argument("--results", nargs="+", required=True)
     et = sub.add_parser("evidence-table", help="markdown table of fetched URLs and searches from result.json files")
     et.add_argument("--results", nargs="+", required=True)
+    pg = sub.add_parser("plan-gate", help="hold after the plan? (needs_human or a hold_on label without plan:approved)")
+    pg.add_argument("--issue", help="inputs/issue.json; omitted or missing = no labels")
+    pg.add_argument("--factory", required=True)
+    pg.add_argument("--plan", required=True)
+    am = sub.add_parser("amigos", help="the human three amigos named in the profile")
+    am.add_argument("--factory", required=True)
     ns = ap.parse_args(argv)
+
+    if ns.cmd == "plan-gate":
+        labels = _labels_of(ns.issue) if ns.issue else []
+        decision = plan_gate(labels, _load(ns.factory), bool(_load(ns.plan).get("needs_human")))
+        json.dump(asdict(decision), sys.stdout)
+        sys.stdout.write("\n")
+        return 0
+
+    if ns.cmd == "amigos":
+        from ..schemas.target_profile import Amigos
+
+        section = _load(ns.factory).get("amigos") or {}
+        a = Amigos.model_validate(section)
+        json.dump({"product": a.product, "development": a.development, "testing": a.testing,
+                   "two_hats": a.two_hats(), "any": bool(a.all())}, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
 
     if ns.cmd in ("check-findings", "evidence-table"):
         results = [_load_result(p) for p in ns.results]

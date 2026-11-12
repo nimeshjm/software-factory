@@ -85,16 +85,50 @@ describe("planTick", () => {
     expect(dispatched(planTick(base({ openIssues: [feat(1, ["factory:accepted"], { authorAssociation: "NONE" })] }), NOW))).toHaveLength(1);
     expect(dispatched(planTick(base({ openIssues: [feat(1, ["needs-human"])] }), NOW))).toHaveLength(0);
   });
-  it("applies risk/plan gate", () => {
+  it("applies risk gate: unrated waits, risk:high is dispatched", () => {
+    const unrated = issue(1, ["status:backlog", "feature"]);
+    const d = planTick(base({ openIssues: [unrated] }), NOW);
+    expect(dispatched(d)).toHaveLength(0);
+    expect(d).toContainEqual({ kind: "skip", agent: "builder", reason: "no_eligible_feature (#1:awaiting-risk)" });
     const high = issue(1, ["status:backlog", "feature", "risk:high"]);
-    expect(dispatched(planTick(base({ openIssues: [high] }), NOW))).toHaveLength(0);
-    const approved = issue(1, ["status:backlog", "feature", "risk:high", "plan:approved"]);
-    expect(dispatched(planTick(base({ openIssues: [approved] }), NOW))).toHaveLength(1);
+    const dh = dispatched(planTick(base({ openIssues: [high] }), NOW));
+    expect(dh).toHaveLength(1);
+    expect(dh[0].subject).toBe("issue:1");
+  });
+  it("resumes a plan-approved feature from status:plan-review, ordered with the backlog", () => {
+    const resumed = issue(3, ["status:plan-review", "feature", "risk:high", "plan:approved", "priority:1"]);
+    const d = planTick(base({ openIssues: [feat(1, ["priority:3"]), feat(2, ["priority:1"]), resumed] }), NOW);
+    expect(dispatched(d)[0].subject).toBe("issue:2");
+    const d2 = planTick(base({ openIssues: [feat(1, ["priority:3"]), resumed] }), NOW);
+    expect(dispatched(d2)[0].subject).toBe("issue:3");
+    expect(dispatched(d2)[0].inputs.phase).toBe("");
+  });
+  it("status:plan-review without plan:approved is not a candidate", () => {
+    const parked = issue(1, ["status:plan-review", "feature", "risk:high"]);
+    const d = planTick(base({ openIssues: [parked] }), NOW);
+    expect(dispatched(d)).toHaveLength(0);
+    expect(d.filter((x) => x.kind === "skip" && x.agent === "builder")).toHaveLength(0);
+  });
+  it("a plan-approved resume still honours needs-human", () => {
+    const held = issue(1, ["status:plan-review", "feature", "risk:high", "plan:approved", "needs-human"]);
+    const d = planTick(base({ openIssues: [held] }), NOW);
+    expect(dispatched(d)).toHaveLength(0);
+    expect(d).toContainEqual({ kind: "skip", agent: "builder", reason: "no_eligible_feature (#1:needs-human)" });
+  });
+  it("resumes a plan-approved bug via the bug-fixer, and ignores an unapproved one", () => {
+    const approved = issue(4, ["status:plan-review", "bug", "plan:approved"]);
+    const d = dispatched(planTick(base({ openIssues: [approved] }), NOW));
+    expect(d.map((x) => x.agent)).toEqual(["bug-fixer"]);
+    expect(d[0].subject).toBe("issue:4");
+    const parked = issue(4, ["status:plan-review", "bug"]);
+    expect(dispatched(planTick(base({ openIssues: [parked] }), NOW))).toHaveLength(0);
+    const held = issue(4, ["status:plan-review", "bug", "plan:approved", "needs-human"]);
+    expect(planTick(base({ openIssues: [held] }), NOW)).toContainEqual({ kind: "skip", agent: "bug-fixer", reason: "no_eligible_bug (#4:needs-human)" });
   });
   it("skip reason lists every blocked feature in order", () => {
     const d = planTick(base({
       openIssues: [
-        issue(35, ["status:backlog", "feature", "risk:high", "priority:1"]),
+        issue(35, ["status:backlog", "feature", "priority:1"]),
         feat(100, [], { authorAssociation: "NONE" }),
         feat(106, ["needs-human"]),
         feat(107, [], { body: "Blocked by #106" }),
@@ -102,7 +136,7 @@ describe("planTick", () => {
     }), NOW);
     expect(d).toContainEqual({
       kind: "skip", agent: "builder",
-      reason: "no_eligible_feature (#35:awaiting-risk-or-plan-approval, #100:author-not-trusted, #106:needs-human, #107:blocked-by:#106)",
+      reason: "no_eligible_feature (#35:awaiting-risk, #100:author-not-trusted, #106:needs-human, #107:blocked-by:#106)",
     });
   });
   it("skip reason lists every blocked bug", () => {

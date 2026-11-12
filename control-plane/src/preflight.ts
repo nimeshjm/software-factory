@@ -191,7 +191,11 @@ export function planTick(state: TickState, now: Date): Decision[] {
   const openNumbers = new Set(state.openIssues.map((i) => i.number));
   const backlog = (types: string[]) =>
     state.openIssues
-      .filter((i) => i.labels.includes("status:backlog") && i.labels.some((l) => types.includes(l)))
+      .filter(
+        (i) =>
+          (i.labels.includes("status:backlog") || (i.labels.includes("status:plan-review") && i.labels.includes("plan:approved"))) &&
+          i.labels.some((l) => types.includes(l)),
+      )
       .sort((a, b) => priorityOf(a.labels) - priorityOf(b.labels) || a.number - b.number);
   const hasPR = (n: number) => state.openPRs.some((p) => prReferences(p, n));
 
@@ -232,7 +236,8 @@ export function planTick(state: TickState, now: Date): Decision[] {
       const blocked: string[] = [];
       for (const f of features) {
         let r: string | null = hasPR(f.number) ? "has-open-pr" : blockReason(f, openNumbers);
-        if (r === null && !f.labels.includes("risk:low") && !f.labels.includes("plan:approved")) r = "awaiting-risk-or-plan-approval";
+        // risk:high is dispatched too: the pipeline stops after the plan and parks the issue in status:plan-review.
+        if (r === null && !f.labels.includes("risk:low") && !f.labels.includes("risk:high")) r = "awaiting-risk";
         if (r === null) {
           chosen = f;
           break;

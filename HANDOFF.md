@@ -4,6 +4,28 @@ Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-02 15:50 UTC
 
 ## Do next (checked 2026-11-12 10:30 UTC)
 
+**Three amigos change (built 2026-11-12 13:40 UTC, uncommitted in the working tree).** Implements the four "Monday morning" items of https://nimeshjm.com/blog/ai-new-3-amigos-agent-orchestration/ on top of the agent trio the factory already had; the written boundary is `docs/three-amigos.md`, the shapes are in `CONTRACTS.md` (`## Three amigos` and the sections it points at).
+
+1. **Humans named per target.** `factory.yml` `amigos: {product, development, testing}` (GitHub logins; a login in two lists is recorded as two hats). The pipeline mentions them in an `Amigos` row of every plan comment and a footer on every review; prompts never see them. `merge_policy` accepts a lit PR's `APPROVED` review only from a named amigo once any are named (`factory/policy/merge.py`). The feature issue form gained an optional "Three amigos for this work" field (not parsed).
+2. **The plan is read before code, for every held issue.** The control plane now dispatches `risk:high` features (before, they were skipped until `plan:approved` existed, so the human approved a plan nobody had written) and resumes `status:plan-review` + `plan:approved` issues for `implement` (`control-plane/src/preflight.ts`, skip reason `awaiting-risk` replaces `awaiting-risk-or-plan-approval`). The hold is one pure function, `factory.policy.plan_gate`, driven by `plan_review.hold_on` (default `["risk:high"]`; add `size:L` to review more plans) and `needs_human`, called by both `run-phases.sh` and `apply_plan`. `apply_plan` prepends a `### Plan at a glance` table (steps, files, needs a human, gate, amigos) rendered from the proposal's structured fields.
+3. **Review split sharpened.** Each question for the human is prefixed with the role it is for: `(product)`, `(development)`, `(testing)` (reviewer prompt step 4, `review-template.md`).
+4. **Standards stay small.** `limits.max_context_chars` (60,000) caps the context files inlined into every prompt; the harness stops before any model call with `stop_reason: context_oversize`, and `python -m factory.schemas check-context` runs the same check in CI (`profiles` job) and can run in the target's CI (`templates/target/ONBOARDING.md`).
+
+**What changes live when this is pushed:** CI deploys the Worker (control-plane changed). On the next ticks the builder will plan, one issue at a time, every `risk:high` feature that is `status:backlog` and passes the author gate (116 "Remove API-Football" first; some of 100 to 103 and 108 to 110 if they are `risk:high` rather than author-gated), parking each in `status:plan-review` with its plan comment. Each plan costs a research plus plan run on flash-lite (about 40 of the 400 daily calls). Pause the control plane first if that is not wanted today. The live target profile in `nimeshjm/fantasy-football` does not need to change (every new section has a default: no amigos means no footer and any human approval still merges), but to get the footers and the amigo-only approval rule copy the `limits.max_context_chars`, `amigos` and `plan_review` blocks from `examples/fantasy-football/factory.yml` into the target's `factory.yml` on `main`.
+
+**Verification (2026-11-12 13:40 UTC):**
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | 216 passed (196 before) |
+| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 37 passed, clean, succeeds |
+| `actionlint`, `shellcheck -x scripts/*.sh`, `scripts/check-config-sync.sh` | clean |
+| `validate-profile` and `check-context` on `templates/target` and `examples/fantasy-football` | pass; example context files total 20,495 chars |
+| `apply-proposal.sh builder plan` against a stub `gh`, real `plan-gate` and `amigos` CLIs, issue labelled `risk:high` | comment rendered with the at-a-glance table, gate `held: label:risk:high; add plan:approved to continue`, amigos row with `two hats: @nimeshjm (product, development, testing)`; labels `status:plan-review` |
+
+Not exercised live: no workflow dispatched, nothing deployed, nothing committed.
+
+
 **Approval trigger: live and proven (2026-11-12).** The control plane dispatches the reviewer when a human submits an `APPROVED` review (`control-plane/src/webhooks.ts`, `mapEvent` and `debounceWindowMs`; commit `89f2676`, deployed by CI run 43223444143; hook 704460903 subscribed to `pull_request_review` at 13:11 UTC). First live use: the owner re-approved PR 126 at 13:11, reviewer run 43224911506 was dispatched within seconds, merge-policy answered `{"merge":true,"reasons":["human approved"]}` and squash-merged at 13:12; issue 118 closed as `status:done`.
 
 **Then, within five minutes (13:13 to 13:17 UTC):** the owner approved Dependabot PRs 128 (`wrangler` 4.158.0) and 127 (`@cloudflare/workers-types`); the trigger dispatched reviewer runs 43225315417 and 43225329072, both answered `human approved` and merged. The Deploy of the 126 merge (run 43225059867, sha `76264a9`) had failed with Cloudflare API error 10013 on the secrets endpoint, but the two merges that followed deployed cleanly (`76339eb`, `fafacb8`), so the live site carries all three changes and the 10013 was a transient. Verifier runs 43225622953 (passed) and 43225740194 followed the deploys. With 118 closed, the 13:15 tick dispatched the builder on 107 (run 43225593828, `builder-202611121315-issue-107`): the first spike apply against GitHub, live. Reviewer run 43225912189 then picked up PR 88 (the lit `vitest` group bump, `needs-human`) from a check-suite event.
@@ -49,6 +71,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | Location | What |
 |---|---|
 | `/Users/admin/repos/software-factory` | this repo, the factory, public at `nimeshjm/software-factory` |
+| `docs/three-amigos.md` | the human/agent boundary: roles, gates, where each rule lives in code |
 | `/Users/admin/repos/fantasy-football` | the target, local clone, on `main` |
 | `CONTRACTS.md` | the shared shapes every part must honour; change it first |
 | `docs/history.md` | the build and graduation log, setup steps and the Plan A design, trimmed from this file on 2026-10-29 |

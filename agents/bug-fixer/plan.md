@@ -74,7 +74,9 @@ spans.
 
 ## Output: `PlanArtifact`
 - `plan_md`: at most 100 lines, headings in order: `Bug and root cause`, `Acceptance criteria to tests`,
-  `Steps`, `Files`, `Tests`, `Telemetry`, `Rollback`, `Risks`. Posted as an issue comment.
+  `Steps`, `Files`, `Tests`, `Telemetry`, `Rollback`, `Risks`. Posted as an issue comment. The pipeline
+  prepends a `Plan at a glance` table rendered from your structured fields, so keep `steps`, `files` and
+  `risk_notes` exact: a human judges the plan from that table first.
 - `files`: repo-relative paths, no globs (empty when `needs_human` for an infra cause).
 - `steps`: ordered step sentences.
 - `risk_notes`: strings, empty if none.

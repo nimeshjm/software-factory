@@ -14,11 +14,14 @@ Applying this template makes one PR in the target repo. Replace `<owner>/<repo>`
    rsync -a --exclude ONBOARDING.md /path/to/software-factory/templates/target/ ./
    ```
    Do not overwrite existing files blindly: merge the issue and PR templates and any existing `AGENTS.md`.
-3. Fill in `factory.yml` (every value in the template is a default; see its comments). At minimum set `toolchain` (runtime, setup, checks), `protected`, `secrets`, `risk`, and `dark_paths` (start empty). Validate it from the software-factory repo:
+3. Fill in `factory.yml` (every value in the template is a default; see its comments). At minimum set `toolchain` (runtime, setup, checks), `protected`, `secrets`, `risk`, `dark_paths` (start empty) and `amigos` (the GitHub logins who hold product, development and testing for this repo; one person may hold two, write it down). `plan_review.hold_on` decides which issues wait for a human to read the plan before any code is written (`risk:high` by default). Validate it from the software-factory repo:
    ```bash
    uv run python -m factory.schemas validate-profile --file /path/to/<repo>/factory.yml
    ```
-4. Fill `.agents/architecture.md`, `.agents/conventions.md`, `.agents/design.md` and `docs/product-spec.md`. All domain knowledge lives there; the factory prompts contain none.
+4. Fill `.agents/architecture.md`, `.agents/conventions.md`, `.agents/design.md` and `docs/product-spec.md`. All domain knowledge lives there; the factory prompts contain none. They are inlined into every prompt, so keep them within `limits.max_context_chars` (60,000 characters in total by default); a run over budget stops before any model call. Add the same check to the target's CI so bloat fails there first:
+   ```bash
+   uv run --project /path/to/software-factory python -m factory.schemas check-context --profile factory.yml --root .
+   ```
 5. Version endpoint: add one that returns the deployed commit SHA (and expose it only behind an auth header if it is sensitive), then set `smoke.version` in `factory.yml`. If you have none, set `smoke.version: null`; the deploy-identity check is then skipped.
 6. Verify the checks locally, commit, push the branch and open the PR from `.github/pull_request_template.md`. Merge it into the default branch BEFORE running the factory: it reads `factory.yml` from there and fails a run when the profile is missing or invalid.
    If you want web research (builder and bug-fixer `web_search`/`fetch_url`) and spikes delivered as issue comments, set `web.allowed_hosts` (`["*"]` = any public host; empty = off).

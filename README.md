@@ -8,6 +8,8 @@ An autonomous software factory for one target repository, named in `factory.conf
 | Development (direction) | `.agents/*`, `factory.yml`, approves `autonomy:lit` PRs | Builder / bug-fixer: implement against the plan |
 | Testing (coherence) | "Questions for the human" in reviews, smoke checks | Reviewer, verifier, incident-responder |
 
+The boundary between the two trios, the gates that enforce it and where each lives in code are in `docs/three-amigos.md`. The humans are named per target in `factory.yml` `amigos`; the pipeline addresses them on plan and review comments and only a named amigo's approval merges a lit PR.
+
 ## How it flows
 
 ```mermaid
@@ -52,7 +54,7 @@ flowchart LR
   L -. "one event per decision" .-> HC
 ```
 
-Loops the cron and webhooks drive: triage on any unlabeled issue; builder on `status:backlog` features and enhancements and bug-fixer on backlog bugs, both stopping after the plan on `risk:high` until a human adds `plan:approved`; reviewer on every factory PR event, on a human approval of any PR, and hourly on the oldest open Dependabot PR; verifier after each successful target deploy; incident responder once a day. The agent process holds only the Gemini key. Everything that touches GitHub runs in `apply-proposal.sh` under a freshly minted App token, and a PR merges without a human only when it is confined to the profile's `dark_paths` (or, with `dark_dependency_bumps: true`, is a Dependabot bump confined to `toolchain.dependency_files` and outside `lit_dependencies`), CI is green and every review thread is resolved.
+Loops the cron and webhooks drive: triage on any unlabeled issue; builder on `status:backlog` features and enhancements and bug-fixer on backlog bugs, both posting the plan first and stopping there (`status:plan-review`) on the profile's `plan_review.hold_on` labels (`risk:high` by default) or when the plan needs a human, resuming with `implement` once a human adds `plan:approved`; reviewer on every factory PR event, on a human approval of any PR, and hourly on the oldest open Dependabot PR; verifier after each successful target deploy; incident responder once a day. The agent process holds only the Gemini key. Everything that touches GitHub runs in `apply-proposal.sh` under a freshly minted App token, and a PR merges without a human only when it is confined to the profile's `dark_paths` (or, with `dark_dependency_bumps: true`, is a Dependabot bump confined to `toolchain.dependency_files` and outside `lit_dependencies`), CI is green and every review thread is resolved.
 
 ## Layout
 

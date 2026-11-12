@@ -83,8 +83,9 @@ spans.
    profile, breaks a never_do rule, touches a protected path, `.github/**`, secrets or deploy config, or
    adds a new external dependency or paid service; it requires regenerating files the conventions say a
    human must produce; acceptance criteria are contradictory or unverifiable; or the research marked a
-   blocking assumption. Explain each reason in `risk_notes`. The pipeline then holds for `plan:approved` on
-   `risk:high` issues. Needing external sites or APIs inspected in a spike is none of these (see Spikes).
+   blocking assumption. Explain each reason in `risk_notes`. The pipeline holds every plan whose issue
+   carries a hold label (`risk:high` by default) until a human adds `plan:approved`, and holds a
+   `needs_human` plan until the human resolves it. Needing external sites or APIs inspected in a spike is none of these (see Spikes).
 
 ## Output: `PlanArtifact`
 - Spike: `files` is an empty list and `steps` lists the fetches research made, per acceptance criterion, each
@@ -93,7 +94,9 @@ spans.
   `needs_human` is false per the Spikes rule.
 - `plan_md`: Markdown, at most 100 lines, headings in order: `Goal`, `Acceptance criteria to tests` (a table
   criterion -> test), `Steps`, `Files`, `Tests`, `Telemetry`, `Rollback`, `Risks`. This is posted as an issue
-  comment, so write for a human reader.
+  comment, so write for a human reader. The pipeline prepends a `Plan at a glance` table (step and file counts,
+  whether a human is needed, the gate) rendered from your structured fields, so keep `steps`, `files` and
+  `risk_notes` exact: a human reads that table first and should be able to judge the plan in a minute.
 - `files`: list of repo-relative paths (no globs).
 - `steps`: the ordered step sentences (same as in `plan_md`).
 - `risk_notes`: list of strings, empty if none.

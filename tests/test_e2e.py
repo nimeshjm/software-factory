@@ -98,3 +98,18 @@ def test_profile_rules_apply_in_run(tmp_path, ws, monkeypatch):
                   "--fake-model"])
     res = json.loads((out / "result.json").read_text())
     assert any(e["rule"] == "profile_command" for e in res["guard_events"]), res
+
+
+def test_context_oversize_stops_before_model(tmp_path, ws, monkeypatch):
+    inputs = _inputs(tmp_path, {"limits": {"max_context_chars": 1000}})
+    (inputs / "context" / "docs").mkdir(parents=True)
+    (inputs / "context" / "AGENTS.md").write_text("a" * 700)
+    (inputs / "context" / "docs" / "product-spec.md").write_text("b" * 400)
+    out = tmp_path / "out"
+    rc = run_mod.main(["--agent", "triage", "--phase", "triage", "--inputs", str(inputs),
+                       "--out", str(out), "--fake-model"])
+    res = json.loads((out / "result.json").read_text())
+    assert rc == 1 and not res["success"] and res["stop_reason"] == "context_oversize"
+    assert res["error"] == "AGENTS.md 700; docs/product-spec.md 400; total 1100 > 1000"
+    assert res["model_calls"] == 0
+    assert not (out / "proposal.json").exists()

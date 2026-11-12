@@ -107,7 +107,7 @@ def test_validate_profile_cli_yaml_and_write(tmp_path, capsys):
     data = json.loads(f.read_text())
     assert data["toolchain"]["checks"] == [{"name": "test", "run": "pytest -q"}]
     assert data["smoke"]["version"] == {"path": "/version", "sha_field": "sha", "auth_header": "x-dashboard-token"}
-    assert data["limits"] == {"max_diff_lines": 300, "max_diff_files": 8}
+    assert data["limits"] == {"max_diff_lines": 300, "max_diff_files": 8, "max_context_chars": 60000}
     assert "version_path" not in data["smoke"]
     assert schemas_main(["validate-profile", "--file", str(f), "--write"]) == 0  # idempotent on JSON input
     assert json.loads(f.read_text()) == data
@@ -186,3 +186,23 @@ def test_web_any_host():
         TargetProfile.model_validate({"web": {"allowed_hosts": ["*", "example.com"]}})
     p = TargetProfile.model_validate({"web": {"allowed_hosts": ["*"]}})
     assert "Web research (`web_search`, `fetch_url`): any public https host" in render_target_profile(p)
+
+
+def test_check_context_cli(tmp_path, capsys):
+    root = tmp_path / "repo"
+    (root / ".agents").mkdir(parents=True)
+    (root / "AGENTS.md").write_text("a" * 40)
+    (root / ".agents" / "x.md").write_text("é" * 10)
+    (root / "other.txt").write_text("z" * 99999)
+    (root / "docs").mkdir()
+    (root / "docs" / "CONTRIBUTING.md").write_text("c" * 5000)  # *.md elsewhere is not a context file
+    prof = tmp_path / "factory.json"
+    prof.write_text(json.dumps({"limits": {"max_context_chars": 1000}}))
+    assert schemas_main(["check-context", "--profile", str(prof), "--root", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert "AGENTS.md 40" in out and ".agents/x.md 10" in out and "total 50 <= 1000" in out
+    assert "other.txt" not in out
+    (root / "AGENTS.md").write_text("a" * 1200)
+    assert schemas_main(["check-context", "--profile", str(prof), "--root", str(root)]) == 1
+    cap = capsys.readouterr()
+    assert cap.out == "" and "AGENTS.md 1200" in cap.err and "total 1210 > 1000" in cap.err

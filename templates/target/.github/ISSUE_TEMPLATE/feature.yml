@@ -29,6 +29,12 @@ body:
         - high
     validations:
       required: true
+  - type: input
+    id: amigos
+    attributes:
+      label: Three amigos for this work
+      description: Who holds product (intent), development (direction) and testing (coherence) for this issue, if not the defaults in factory.yml. Name anyone wearing two hats.
+      placeholder: "product @a · development @b · testing @a (two hats: @a)"
   - type: textarea
     id: out_of_scope
     attributes:
