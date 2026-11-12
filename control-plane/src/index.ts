@@ -1,3 +1,4 @@
+import { handleDashboard } from "./dashboard";
 import { handleFinished, handleStarted, handleStatus } from "./ledger";
 import { runTick } from "./scheduler";
 import type { Env } from "./types";
@@ -11,6 +12,7 @@ export default {
     try {
       if (path === "/webhooks/github" && req.method === "POST") return await handleWebhook(req, env, ctx);
       if (path === "/status" && req.method === "GET") return await handleStatus(req, env);
+      if (path === "/dashboard" && req.method === "GET") return await handleDashboard(req, env);
 
       const run = /^\/runs\/([^/]+)\/(started|finished)$/.exec(path);
       if (run && req.method === "POST") {

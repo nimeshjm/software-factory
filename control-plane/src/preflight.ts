@@ -53,7 +53,7 @@ export type Decision =
   | { kind: "skip"; agent: string; reason: string };
 
 const TRUSTED = new Set(["OWNER", "COLLABORATOR", "MEMBER"]);
-const STALE_GRACE_MIN = 10;
+export const STALE_GRACE_MIN = 10;
 
 export function priorityOf(labels: string[]): number {
   for (const l of labels) {
@@ -91,12 +91,60 @@ export function makeRunId(agent: string, subject: string, now: Date): string {
   return `${agent}-${ts}-${slug(subject)}`;
 }
 
-function blockReason(i: IssueInfo, openNumbers: Set<number>): string | null {
+export function blockReason(i: IssueInfo, openNumbers: Set<number>): string | null {
   if (i.labels.includes("needs-human")) return "needs-human";
   if (!TRUSTED.has(i.authorAssociation) && !i.labels.includes("factory:accepted")) return "author-not-trusted";
   const open = parseDependencies(i.body).filter((n) => openNumbers.has(n));
   if (open.length) return `blocked-by:${open.map((n) => `#${n}`).join(",")}`;
   return null;
+}
+
+export const BUILDER_TYPES = ["feature", "enhancement"];
+export const BUG_TYPES = ["bug"];
+
+/** An issue in the tick's candidate order with the reason it would be passed over (null = dispatchable). */
+export interface Candidate {
+  issue: IssueInfo;
+  reason: string | null;
+}
+
+/**
+ * Pure: the ordered candidate list the tick walks for one agent (builder: feature and enhancement;
+ * bug-fixer: bug), with each issue's skip reason. The tick dispatches the first candidate whose
+ * reason is null; the dashboard shows the whole list as "what happens next".
+ */
+export function candidateQueue(state: Pick<TickState, "openIssues" | "openPRs">, types: string[]): Candidate[] {
+  const openNumbers = new Set(state.openIssues.map((i) => i.number));
+  const hasPR = (n: number) => state.openPRs.some((p) => prReferences(p, n));
+  const builder = types.includes("feature");
+  return state.openIssues
+    .filter(
+      (i) =>
+        (i.labels.includes("status:backlog") || (i.labels.includes("status:plan-review") && i.labels.includes("plan:approved"))) &&
+        i.labels.some((l) => types.includes(l)),
+    )
+    .sort((a, b) => priorityOf(a.labels) - priorityOf(b.labels) || a.number - b.number)
+    .map((issue) => {
+      let reason: string | null = hasPR(issue.number) ? "has-open-pr" : blockReason(issue, openNumbers);
+      // risk:high is dispatched too: the pipeline stops after the plan and parks the issue in status:plan-review.
+      if (builder && reason === null && !issue.labels.includes("risk:low") && !issue.labels.includes("risk:high")) reason = "awaiting-risk";
+      return { issue, reason };
+    });
+}
+
+/** Pure: an open bug at priority 1 or 2 that no human is parked on; while one exists the builder waits (bugs_first). */
+export function urgentBugs(issues: IssueInfo[]): IssueInfo[] {
+  // A bug parked on a human (needs-human) is nothing an agent can act on, so it does not hold features back.
+  return issues.filter(
+    (i) =>
+      i.labels.includes("bug") &&
+      !i.labels.includes("needs-human") &&
+      (i.labels.includes("priority:1") || i.labels.includes("priority:2")),
+  );
+}
+
+export function countFactoryPRs(prs: Pick<PRInfo, "headRef">[]): number {
+  return prs.filter((p) => /^(feat|fix)\//.test(p.headRef)).length;
 }
 
 const MAX_BLOCKED_LISTED = 10;
@@ -188,62 +236,33 @@ export function planTick(state: TickState, now: Date): Decision[] {
     dispatch("triage", `issue:${n}`, n, null, "triage");
   }
 
-  const openNumbers = new Set(state.openIssues.map((i) => i.number));
-  const backlog = (types: string[]) =>
-    state.openIssues
-      .filter(
-        (i) =>
-          (i.labels.includes("status:backlog") || (i.labels.includes("status:plan-review") && i.labels.includes("plan:approved"))) &&
-          i.labels.some((l) => types.includes(l)),
-      )
-      .sort((a, b) => priorityOf(a.labels) - priorityOf(b.labels) || a.number - b.number);
-  const hasPR = (n: number) => state.openPRs.some((p) => prReferences(p, n));
+  // Walk the candidate order until the first dispatchable issue; everything before it is reported as blocked.
+  const pick = (queue: Candidate[]): { chosen: IssueInfo | null; blocked: string[] } => {
+    const blocked: string[] = [];
+    for (const c of queue) {
+      if (c.reason === null) return { chosen: c.issue, blocked };
+      blocked.push(`#${c.issue.number}:${c.reason}`);
+    }
+    return { chosen: null, blocked };
+  };
 
   // bug-fixer
-  const bugs = backlog(["bug"]);
+  const bugs = candidateQueue(state, BUG_TYPES);
   if (bugs.length) {
-    let chosen: IssueInfo | null = null;
-    const blocked: string[] = [];
-    for (const b of bugs) {
-      const r = hasPR(b.number) ? "has-open-pr" : blockReason(b, openNumbers);
-      if (r === null) {
-        chosen = b;
-        break;
-      }
-      blocked.push(`#${b.number}:${r}`);
-    }
+    const { chosen, blocked } = pick(bugs);
     if (chosen) dispatch("bug-fixer", `issue:${chosen.number}`, chosen.number, null, "");
     else decisions.push({ kind: "skip", agent: "bug-fixer", reason: `no_eligible_bug (${formatBlocked(blocked)})` });
   }
 
   // builder
-  const features = backlog(["feature", "enhancement"]);
+  const features = candidateQueue(state, BUILDER_TYPES);
   if (features.length) {
-    const factoryPrs = state.openPRs.filter((p) => /^(feat|fix)\//.test(p.headRef)).length;
-    // A bug parked on a human (needs-human) is nothing an agent can act on, so it does not hold features back.
-    const urgentBug = state.openIssues.some(
-      (i) =>
-        i.labels.includes("bug") &&
-        !i.labels.includes("needs-human") &&
-        (i.labels.includes("priority:1") || i.labels.includes("priority:2")),
-    );
-    if (factoryPrs >= state.maxOpenFactoryPrs) {
+    if (countFactoryPRs(state.openPRs) >= state.maxOpenFactoryPrs) {
       decisions.push({ kind: "skip", agent: "builder", reason: "backpressure" });
-    } else if (urgentBug) {
+    } else if (urgentBugs(state.openIssues).length) {
       decisions.push({ kind: "skip", agent: "builder", reason: "bugs_first" });
     } else {
-      let chosen: IssueInfo | null = null;
-      const blocked: string[] = [];
-      for (const f of features) {
-        let r: string | null = hasPR(f.number) ? "has-open-pr" : blockReason(f, openNumbers);
-        // risk:high is dispatched too: the pipeline stops after the plan and parks the issue in status:plan-review.
-        if (r === null && !f.labels.includes("risk:low") && !f.labels.includes("risk:high")) r = "awaiting-risk";
-        if (r === null) {
-          chosen = f;
-          break;
-        }
-        blocked.push(`#${f.number}:${r}`);
-      }
+      const { chosen, blocked } = pick(features);
       if (chosen) dispatch("builder", `issue:${chosen.number}`, chosen.number, null, "");
       else decisions.push({ kind: "skip", agent: "builder", reason: `no_eligible_feature (${formatBlocked(blocked)})` });
     }

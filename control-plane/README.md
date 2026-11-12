@@ -108,6 +108,17 @@ Candidates for the bug-fixer and builder are open issues of the right type label
 
 An agent absent from the decisions was not a candidate on that tick (nothing in its backlog, or it runs on a schedule such as the hourly Dependabot review and the daily incident responder).
 
+## Dashboard
+
+`GET /dashboard` answers the three owner questions on one page: what happened, what is blocked, what happens next. No token (it shows only what `/status` and the public target repo already show), HTML in a browser, JSON with `?format=json` or without an HTML `Accept`. `?hours=N` sets the "happened" window (default 48, max 168). Open `https://factory-control-plane.nimeshjm.workers.dev/dashboard`; it refreshes itself every five minutes and the response is cached for one minute.
+
+- **Tiles:** running or paused, how many items need a human, runs in flight, runs and failures in the window, model calls used plus reserved against the daily quota, PRs merged and issues closed.
+- **Blocked:** one card per kind, severity first. `you` kinds need the owner (`paused`, `stuck-in-progress`, `orphan-in-review`, `failed-run`, `plan-review`, `needs-human`, `awaiting-risk`, `author-not-trusted`, `lit-pr`, `needs-human-pr`, `backpressure`); `waits` kinds clear on their own (`overdue-run`, `blocked-by`, `bugs-first`, `quota`). Each item carries the command that clears it. `stuck-in-progress` (an issue labelled `status:in-progress` with no run in flight), `orphan-in-review` (no open PR references the issue) and `failed-run` (the last run on a subject ended `failed`, `timeout` or `lost` and nothing retried it) are the stalls the tick itself cannot see.
+- **Next:** the next tick time, the builder and bug-fixer candidate lists in the tick's own order with each issue's skip reason (`src/preflight.ts` `candidateQueue`, the same function `planTick` walks), the agent's gate (`in_flight`, `bugs_first`, `backpressure`, `quota`), the unlabelled issues triage will sweep, the next Dependabot review and 06:00 UTC daily runs, and the last tick's decisions.
+- **Happened:** PRs merged and issues closed in the window, model calls per UTC day, run counts by agent and outcome, and every run with its trigger, outcome, stop reason, duration, calls and Actions log link.
+
+The page reads the ledger (one query, at most 500 rows) and makes three GitHub list calls (open PRs, open issues, issues and PRs updated since the window start). When GitHub cannot be read the ledger half still renders and `github_error` says why. `buildDashboard` and `dashboardHtml` in `src/dashboard.ts` are pure and tested in `test/dashboard.test.ts`.
+
 ## Local dev
 
 ```bash

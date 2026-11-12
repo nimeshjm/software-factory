@@ -2,7 +2,21 @@
 
 Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-02 15:50 UTC (security-triage live, two problems found). Everything below is the state at that time.
 
-## Do next (checked 2026-11-12 10:30 UTC)
+## Do next (checked 2026-11-12 14:10 UTC)
+
+**Dashboard (built 2026-11-12 14:10 UTC, uncommitted in the working tree).** `GET /dashboard` on the control plane: what happened, what is blocked (with the command that clears each item), what the next tick will do. Contract in `CONTRACTS.md` `## Control plane HTTP`, runbook in `control-plane/README.md` `## Dashboard`, code in `control-plane/src/dashboard.ts` (pure build and render, tested) with the route in `src/index.ts`. `preflight.ts` gained `candidateQueue`, `urgentBugs` and `countFactoryPRs`; `planTick` now walks `candidateQueue`, so the forecast and the tick cannot disagree (behaviour unchanged, 37 existing tests pass as before). `github.ts` issue and PR rows carry titles, authors, timestamps, `html_url`, and `listIssues` takes `since` and `includePRs`. Nothing else changed. Push `main` and CI deploys it; then open `https://factory-control-plane.nimeshjm.workers.dev/dashboard`.
+
+| Check | Result |
+|---|---|
+| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 48 passed (37 before), clean, succeeds |
+| Preview rendered from live target data and `/status` (Actions runs standing in for the ledger) | desktop and phone screenshots read; blockers grouped by kind |
+
+**Two things the dashboard preview showed on 2026-11-12 (verified against `/status` at 14:07 UTC):**
+
+1. **The builder is planning epics.** Since the three amigos change dispatches `risk:high` features for a plan, the backlog epics 35 ("add a second LLM provider"), 106 and 115 (`risk:high status:backlog priority:2`, labelled `epic`) are builder candidates, and 35 sorts first. The 14:00 tick dispatched `builder-202611121400-issue-35` (run 43232794169) on the epic itself, and 106 and 115 follow. `candidateQueue` has no `epic` exclusion; add one (and a test) if epics should never be built or planned directly, or relabel the epics out of `status:backlog`. Each plan costs a research plus plan run.
+2. **107 failed twice today** (runs 43225593828 at 13:15 and 43227971800 at 13:30, both `failure`; it was `status:backlog` again by 14:00, so the apply step reset it). Not yet read; compare with the 107 history below before releasing it a third time. The 13:17 reviewer run 43225912189 on PR 88 also failed (PR 88 is `needs-human`).
+
+The seven child issues 100 to 103 and 108 to 110 are `author-not-trusted` (filed by the bot, no `factory:accepted`); the dashboard lists the `gh issue edit ... --add-label factory:accepted` for each.
 
 **Three amigos change (built 2026-11-12 13:40 UTC, uncommitted in the working tree).** Implements the four "Monday morning" items of https://nimeshjm.com/blog/ai-new-3-amigos-agent-orchestration/ on top of the agent trio the factory already had; the written boundary is `docs/three-amigos.md`, the shapes are in `CONTRACTS.md` (`## Three amigos` and the sections it points at).
 

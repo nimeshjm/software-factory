@@ -126,6 +126,9 @@ export interface GhPR {
   headRef: string;
   labels: string[];
   isDraft: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+  htmlUrl: string | null;
 }
 
 export async function listOpenPRs(env: Env, repo: string, maxPages = 3): Promise<GhPR[]> {
@@ -138,6 +141,9 @@ export async function listOpenPRs(env: Env, repo: string, maxPages = 3): Promise
     headRef: p.head?.ref ?? "",
     labels: (p.labels ?? []).map((l: any) => l.name),
     isDraft: !!p.draft,
+    createdAt: p.created_at ?? null,
+    updatedAt: p.updated_at ?? null,
+    htmlUrl: p.html_url ?? null,
   }));
 }
 
@@ -148,6 +154,15 @@ export interface GhIssue {
   labels: string[];
   authorAssociation: string;
   state: string;
+  author: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  closedAt: string | null;
+  htmlUrl: string | null;
+  /** True when the issues API returned a pull request (only with `includePRs`). */
+  isPullRequest: boolean;
+  /** Merge time of a pull request row, null for an issue or an unmerged PR. */
+  mergedAt: string | null;
 }
 
 function mapIssue(i: any): GhIssue {
@@ -158,19 +173,27 @@ function mapIssue(i: any): GhIssue {
     labels: (i.labels ?? []).map((l: any) => (typeof l === "string" ? l : l.name)),
     authorAssociation: i.author_association ?? "NONE",
     state: i.state,
+    author: i.user?.login ?? "",
+    createdAt: i.created_at ?? null,
+    updatedAt: i.updated_at ?? null,
+    closedAt: i.closed_at ?? null,
+    htmlUrl: i.html_url ?? null,
+    isPullRequest: !!i.pull_request,
+    mergedAt: i.pull_request?.merged_at ?? null,
   };
 }
 
-/** Lists issues (pull requests are filtered out). */
+/** Lists issues (pull requests are filtered out unless `includePRs`); `since` limits to rows updated after it. */
 export async function listIssues(
   env: Env,
   repo: string,
-  opts: { labels?: string[]; state?: "open" | "closed" | "all"; maxPages?: number } = {},
+  opts: { labels?: string[]; state?: "open" | "closed" | "all"; maxPages?: number; since?: string; includePRs?: boolean } = {},
 ): Promise<GhIssue[]> {
   const q = new URLSearchParams({ state: opts.state ?? "open", per_page: "100" });
   if (opts.labels?.length) q.set("labels", opts.labels.join(","));
+  if (opts.since) q.set("since", opts.since);
   const raw = await paginate<any>(env, repo, `/repos/${repo}/issues?${q}`, opts.maxPages ?? 3);
-  return raw.filter((i) => !i.pull_request).map(mapIssue);
+  return raw.filter((i) => opts.includePRs || !i.pull_request).map(mapIssue);
 }
 
 export async function getIssue(env: Env, repo: string, n: number): Promise<GhIssue> {
