@@ -79,7 +79,7 @@
     }
   },
   "context": {
-    "tool_result_max_chars": 20000,
+    "tool_result_max_chars": 8000,
     "offload_threshold_tokens": 2000,
     "summarize_utilization": 0.8,
     "preserve_recent": 4

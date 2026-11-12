@@ -273,6 +273,16 @@ jobs:
           AGENT: ${{ inputs.agent }}
         run: scripts/apply-proposal.sh "$AGENT" --auto
 
+      - name: Salvage failed run
+        if: ${{ !cancelled() && inputs.dry_run != 'true' && steps.harness.outcome == 'failure' && (inputs.agent == 'builder' || inputs.agent == 'bug-fixer') && inputs.issue != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app2.outputs.token }}
+          RUN_ID: ${{ steps.ids.outputs.run_id }}
+          ISSUE: ${{ inputs.issue }}
+          AGENT: ${{ inputs.agent }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: scripts/salvage-run.sh
+
       - name: Upload artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

@@ -31,15 +31,23 @@ def truncate_tool_result(result: Any, max_chars: int) -> tuple[Any, bool]:
     return ({**result, "content": content} if changed else result), changed
 
 
+# Tools that shape and clip their own result for the model (fetch_url keeps a JSON key tree plus as much raw
+# text as fits its own cap); cutting their middle would destroy exactly the part research needs.
+SELF_CLIPPING_TOOLS = frozenset({"fetch_url"})
+
+
 class ContextGuard(HookProvider):
-    def __init__(self, max_chars: int, log: GuardLog) -> None:
+    def __init__(self, max_chars: int, log: GuardLog, exempt_tools: frozenset[str] = SELF_CLIPPING_TOOLS) -> None:
         self.max_chars = max_chars
         self.log = log
+        self.exempt_tools = exempt_tools
 
     def register_hooks(self, registry: HookRegistry, **kwargs) -> None:  # noqa: ANN003
         registry.add_callback(AfterToolCallEvent, self.after_tool)
 
     def after_tool(self, event: AfterToolCallEvent) -> None:
+        if event.tool_use.get("name", "") in self.exempt_tools:
+            return
         new, changed = truncate_tool_result(event.result, self.max_chars)
         if changed:
             event.result = new

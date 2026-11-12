@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from strands.types.exceptions import ModelThrottledException
 
+from factory.guards.budget_guard import BudgetGuard
 from factory.guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard
 from factory.guards.context_guard import build_context_kwargs, truncate_text, truncate_tool_result
 from factory.guards.output_guard import ZWSP, redact, scan_obj, scan_text
@@ -135,3 +136,57 @@ def test_output_guard_cli_profile(tmp_path):
     assert guard_main(["--file", str(tmp_path / "t.txt")]) == 0
     assert guard_main(["--file", str(tmp_path / "t.txt"), "--profile", str(tmp_path / "factory.json")]) == 2
     assert guard_main(["--file", str(tmp_path / "t.txt"), "--profile", str(tmp_path / "missing.json")]) == 1
+
+
+def _budget_event(tokens=0, cycles=0):
+    inv = SimpleNamespace(usage={"totalTokens": tokens}, cycles=[0] * cycles)
+    agent = SimpleNamespace(event_loop_metrics=SimpleNamespace(latest_agent_invocation=inv))
+    return SimpleNamespace(agent=agent, end_turn=False)
+
+
+def test_budget_guard_tokens_threshold():
+    log = GuardLog()
+    g = BudgetGuard({"total_tokens": 1000}, 100, QuotaGuard(100, log), log)
+    below = _budget_event(tokens=849)
+    g.on_after_tools(below)
+    assert below.end_turn is False and not g.nudged
+    at = _budget_event(tokens=850)
+    g.on_after_tools(at)
+    assert at.end_turn.startswith("[budget_guard] budget nearly spent") and g.nudged
+    assert log.events[0]["guard"] == "budget_guard" and log.events[0]["rule"] == "soft_nudge"
+    assert log.events[0]["detail"] == "tokens=850/850"
+    again = _budget_event(tokens=990)
+    g.on_after_tools(again)
+    assert again.end_turn is False and len(log.events) == 1  # nudge only once
+
+
+def test_budget_guard_turns_threshold():
+    log = GuardLog()
+    g = BudgetGuard({"turns": 20}, 100, QuotaGuard(100, log), log)
+    g.on_after_tools(_budget_event(cycles=16))
+    assert not g.nudged
+    ev = _budget_event(cycles=17)
+    g.on_after_tools(ev)
+    assert ev.end_turn and log.events[0]["detail"] == "turns=17/17"
+
+
+def test_budget_guard_calls_reserve():
+    log = GuardLog()
+    q = QuotaGuard(10, log)
+    g = BudgetGuard({}, 10, q, log)  # min(floor(8.5)=8, 10-3=7) = 7
+    q.calls = 6
+    g.on_after_tools(_budget_event())
+    assert not g.nudged
+    q.calls = 7
+    ev = _budget_event()
+    g.on_after_tools(ev)
+    assert ev.end_turn and log.events[0]["detail"] == "calls=7/7"
+
+
+def test_budget_guard_missing_invocation_does_not_raise():
+    log = GuardLog()
+    g = BudgetGuard({"total_tokens": 1000}, 10, QuotaGuard(10, log), log)
+    for agent in (SimpleNamespace(event_loop_metrics=SimpleNamespace(latest_agent_invocation=None)), SimpleNamespace()):
+        ev = SimpleNamespace(agent=agent, end_turn=False)
+        g.on_after_tools(ev)
+        assert ev.end_turn is False

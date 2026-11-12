@@ -120,6 +120,42 @@ def test_profile_rules_block_and_default_allows(ws):
     assert _hook(lax, "edit_file", path="config/prod.json", command="create", file_text="x") is False
 
 
+def _checks_profile(**extra):
+    return TargetProfile.model_validate({"toolchain": {"checks": [
+        {"name": "typecheck", "run": "npm run typecheck"}, {"name": "lint", "run": "npm run lint"},
+        {"name": "test", "run": "npm test"}]}, **extra})
+
+
+@pytest.mark.parametrize("cmd,blocked", [
+    ("npm test", True), ("  npm test  ", True), ("npm test -- --run", True), ("npm run typecheck", True),
+    ("npm run lint", True), ("npm tests", False), ("npx vitest run test/api.test.ts", False),
+    ("git diff --stat", False),
+])
+def test_use_run_checks(ws, cmd, blocked):
+    got = check_shell(cmd, ws, HOSTS, profile=_checks_profile())
+    assert (got is not None) == blocked
+    if blocked:
+        assert got[0] == "use_run_checks"
+        assert got[1] == ("run this through run_checks (it summarises the output); "
+                          "for one test use the profile's single_test hint")
+        assert evaluate("shell_in_workspace", {"command": cmd}, ws, HOSTS, profile=_checks_profile()) == got
+        assert _hook(ToolGuard(GuardLog(), _checks_profile(), HOSTS), "shell_in_workspace", command=cmd).startswith(
+            "[tool_guard] Blocked use_run_checks: run this through run_checks")
+
+
+def test_use_run_checks_needs_checks_and_only_shell(ws):
+    assert check_shell("npm test", ws, HOSTS, profile=TargetProfile()) is None
+    g = ToolGuard(GuardLog(), TargetProfile(), HOSTS)
+    assert _hook(g, "shell_in_workspace", command="npm test") is False
+
+
+def test_use_run_checks_protected_command_wins(ws):
+    prof = _checks_profile(protected={"commands": [r"\bnpm\b"]})
+    assert check_shell("npm test", ws, HOSTS, profile=prof)[0] == "profile_command"
+    assert check_shell("git push && npm test", ws, HOSTS, profile=prof)[0] == "git_push"
+    assert _hook(ToolGuard(GuardLog(), _checks_profile(), HOSTS), "read_file", path="npm test") is False
+
+
 def test_profile_cannot_remove_baseline(ws):
     prof = TargetProfile.model_validate({"protected": {"commands": ["x"]}, "toolchain": {"env_prefixes": ["GH_"]}})
     g = ToolGuard(GuardLog(), prof, HOSTS)

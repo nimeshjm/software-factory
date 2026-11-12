@@ -35,6 +35,8 @@ BASELINE_SHELL_RULES: tuple[tuple[str, str, str], ...] = (
     ("gh_cli", r"(?:^|[\s;&|(`])gh(?:\s|$)", "the GitHub CLI is not available to agents"),
     ("sudo", r"\bsudo\b", "sudo is not allowed"),
 )
+USE_RUN_CHECKS_DETAIL = ("run this through run_checks (it summarises the output); "
+                         "for one test use the profile's single_test hint")
 # (rule, glob, tools the rule applies to, detail)
 ALL_PATH_TOOLS = frozenset(PATH_TOOLS)
 BASELINE_PATH_RULES: tuple[tuple[str, str, frozenset[str], str], ...] = (
@@ -64,6 +66,10 @@ class Rules:
             for m in profile.protected.env_markers:
                 r.shell.append(("profile_env_marker", re.compile(rf"(?<![A-Za-z0-9_]){re.escape(m)}(?![A-Za-z0-9_])"),
                                 f"{m} must never appear in a command"))
+            for chk in profile.toolchain.checks:
+                run = chk.run.strip()
+                if run:
+                    r.shell.append(("use_run_checks", re.compile(rf"^{re.escape(run)}(\s|$)"), USE_RUN_CHECKS_DETAIL))
             r.path_globs = list(profile.protected.paths)
         return r
 
@@ -189,7 +195,7 @@ def check_shell(command: str, workspace: Path | None = None, allowed_hosts=None,
     c = command or ""
     rules = rules or Rules.compile(profile)
     for name, rx, detail in rules.shell:
-        if name.startswith("profile_"):
+        if name.startswith("profile_") or name == "use_run_checks":
             continue
         if rx.search(c):
             return name, detail
@@ -218,6 +224,10 @@ def check_shell(command: str, workspace: Path | None = None, allowed_hosts=None,
         return "protected_path_write", "writes to .github/ or .git/ are not allowed"
     for name, rx, detail in rules.shell:
         if name.startswith("profile_") and rx.search(c):
+            return name, detail
+    stripped = c.strip()  # last, so a protected-command match wins over use_run_checks
+    for name, rx, detail in rules.shell:
+        if name == "use_run_checks" and rx.search(stripped):
             return name, detail
     return None
 

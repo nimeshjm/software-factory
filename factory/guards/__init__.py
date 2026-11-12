@@ -1,5 +1,6 @@
 from .context_guard import ContextGuard, build_context_kwargs
 from .events import GuardLog
+from .budget_guard import BudgetGuard
 from .latency_guard import LatencyGuard
 from .output_guard import scan_obj, scan_text
 from .quota_guard import QuotaGuard

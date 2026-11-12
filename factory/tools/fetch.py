@@ -16,7 +16,7 @@ from .profile import get_profile
 
 MAX_BYTES = 200_000
 MAX_JSON_BYTES = 2_000_000
-MAX_CHARS = 20_000  # whole tool result; matches factory.config.json context.tool_result_max_chars
+MAX_CHARS = 20_000  # whole tool result; fetch_url is exempt from the context guard's cap (it clips itself)
 NOTE_ROOM = 100
 SHAPE_ITEMS = 50
 SHAPE_DEPTH = 8

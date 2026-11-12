@@ -1,8 +1,30 @@
 # Handoff: software factory
 
-Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-02 15:50 UTC (security-triage live, two problems found). Everything below is the state at that time.
+Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-12 18:40 UTC (salvage step, budget wrap-up and shell rule built after the 125 run died). Everything below is the state at that time.
 
-## Do next (checked 2026-11-12 17:10 UTC)
+## Do next (checked 2026-11-12 17:10 UTC; salvage, budget wrap-up and shell rule built 2026-11-12 ~18:40 UTC, not committed)
+
+**Failed implement runs: salvage, budget wrap-up, cheaper test output (built 2026-11-12, uncommitted, not deployed).** Prompted by the 125 run (below). Contract in `CONTRACTS.md`: the salvage bullet under Post-step rules, `backup/<N>-attempt<k>-<stop_reason>` under Branch conventions, and "Budget wrap-up" plus "Shell tool and context size" under Harness CLI.
+
+1. **Salvage post-step** (`scripts/salvage-run.sh`, step "Salvage failed run" in `agent-run.yml`, after "Apply proposal"): for a failed builder or bug-fixer run with an issue, deterministic and model-free: when the failed phase is `implement`, WIP-commits `work/` and pushes it to `backup/<N>-attempt<k>-<stop_reason>` (`out/salvage.txt` holds the name); moves `status:in-progress` back to `status:backlog` (other status labels are left alone, so a plan hold stays `plan-review`); posts one `<!-- factory:failure -->` comment with phase, stop reason, error, backup branch, label action and run link. Never fails the job. Tested against a real bare repo and a stub `gh` (`tests/test_salvage.py`). The control plane's failure backoff spaces the retries (60 min, 180 min, 24 h cap), so the reset cannot recreate the 107 loop.
+2. **Budget wrap-up** (`factory/guards/budget_guard.py`, `factory/run.py`): at 85% of `total_tokens`, `turns` or model calls (calls also leave a reserve of 3) the guard ends the turn with `[budget_guard] budget nearly spent, finish now with the proposal`; `factory.run` then gives one `FINALIZE_PROMPT` invocation (3 turns: commit if needed, emit the proposal) after a budget or latency nudge, and also after a bare `limit_turns` / `limit_total_tokens` stop. Guard events `budget_guard/soft_nudge` (`tokens=<used>/<cap>`) and `budget_guard/finalize` (`<first stop_reason>`) in `result.json`. `context.budget_soft_fraction` in `factory.config.json` overrides the fraction (not set; default in code).
+3. **Cheaper test output**: `ToolGuard` blocks any `shell_in_workspace` command equal to (or starting with) one of the profile's `toolchain.checks[].run` as `use_run_checks`, so the full suite, lint and typecheck only reach the model as `run_checks`' summary; `context.tool_result_max_chars` 20000 → 8000 (`fetch_url` is exempt: it clips itself to 20,000 and research needs its key tree whole); both implement prompts say so, name both nudges, and tell the model not to re-read files.
+
+*Verification (2026-11-12, after the build):*
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | 250 passed (226 before: 4 budget guard, 2 wrap-up incl. a `--fake-model` run that hits `limit_turns` and finishes via the finalize, 5 salvage, 3 context guard, 10 tool guard) |
+| `cd control-plane && npm test && npx tsc --noEmit && npx wrangler deploy --dry-run` | 61 passed, clean, succeeds (no control plane change) |
+| `actionlint`, `shellcheck -x scripts/*.sh`, `scripts/check-config-sync.sh` | clean |
+
+*Owner actions:* review the diff, commit, push `main` (CI deploys nothing new here: the harness, scripts and workflow are read from `main` at the next run; the Worker is unchanged). Then release 125: `gh issue edit 125 -R nimeshjm/fantasy-football --remove-label status:in-progress --add-label status:backlog` (it carries one failure, so the tick waits 60 minutes from 16:11 UTC before retrying; or dispatch by hand with `gh workflow run builder.yml -R nimeshjm/software-factory -f issue=125`). The 125 work from run 43253957669 is gone (the salvage step did not exist yet).
+
+*First live proof:* on the 125 retry, `[tool] shell_in_workspace blocked` lines for any `npm test` in the implement step log, a `budget_guard` `soft_nudge` event only if it again nears 900k, and either a PR or, on failure, a `<!-- factory:failure -->` comment on 125, a `backup/125-attempt1-<reason>` branch and `status:backlog` restored without a human. The dashboard should then never show `stuck-in-progress` for a run that died after apply; if it does, the salvage step's log says why.
+
+*Not done, deliberately:* no rtk (the harness has no command-rewrite hook, and `run_checks` already summarises); no resume of a backup branch on retry (the retry re-runs research and plan from `status:backlog`; cheap on flash-lite); backup branches are not cleaned up (delete `backup/*` by hand when an issue closes, or add a cron later).
+
+**The 125 run (43253957669, 2026-11-12 16:00 to 16:11 UTC).** First run on 125. Research and plan succeeded; apply posted the plan and set `status:in-progress` at 16:10:53. Implement died with `stop_reason=limit_total_tokens`: 42 calls, 30 cycles, 921,787 tokens (919,399 input) against the 900,000 cap, no proposal, nothing pushed, so the edits (endpoint, test, spec; `run_checks` had just returned ok twice) were lost. Two unresponsive-model switches to `gemini-3.1-flash-lite` (throttled 16:02, server_error 16:08) worked as designed and were not the cause. The budget went on context growth: three bare `npm test` runs through `shell_in_workspace` (two results truncated at 20,000 chars) and repeated re-reads of `src/api/endpoints.ts` and `test/api.test.ts`, about 22k input tokens per call. 125 is still `status:in-progress` with no run (the 16:15 tick's skip list does not mention it): the dashboard shows `stuck-in-progress`. The three fixes above are the response.
 
 **Plan C: agents run health board in Honeycomb (planned 2026-11-12 17:10 UTC, nothing built).** Scope decided by the owner: a board that answers "are the agents' runs healthy?", not the factory-operations board that software-factory issue #1 describes. Issue #1's tick-decision, PR-opened/merged and daily-quota panels are deferred; the owner should retitle or split #1 (the run panels, the `workflow_run_url` field, the `docs/honeycomb/` and CONTRACTS criteria carry over). Researched 2026-11-12 against the Honeycomb docs: the free plan allows the Boards, Queries, Query Annotations and Calculated Fields (derived columns) APIs with a configuration key; only the Query Data API is Enterprise. Boards are `flexible` only since 2025-08-15, a query panel needs a `query_id` and a `query_annotation_id`, `position` is `x,y,w,h` on a 12-column grid. Retention is 60 days from ingest, so the 11-11 and 11-12 runs stay queryable into January. Span events carry the OTLP resource attributes (`factory.run_id`, `factory.agent`, `factory.phase`), so guard and model events are queryable by agent without changes.
 
@@ -69,7 +91,7 @@ Each attempt costs about six model calls and twenty minutes of runner time; mode
 - **Epics 35 and 106 were planned** (runs 43232794169 and 43235336033) and sit in `status:plan-review needs-human` with their plan comments. **Epic 115** is still `status:backlog risk:high` and is the next builder candidate once 107 is capped; `candidateQueue` still has no `epic` exclusion, so either add one or accept the plan run.
 - **119, 120, 121** (security bugs) are `needs-human`, unchanged; the bug-fixer skips them every tick. PR 88, the `vitest` bump that would close 121, still fails `toolchain.setup`, so the reviewer posts "could not set up this branch" and leaves it `needs-human`.
 - **100 to 103 and 108 to 110** are `author-not-trusted` (bot-filed, no `factory:accepted`); the dashboard lists the label command for each.
-- **116, 117, 125** are backlog and healthy. 116 is `risk:high` and gets a plan run when its turn comes; 117 is `needs-human`; 125 is `risk:low size:S` and is the next real build after the spikes.
+- **116, 117** are backlog and healthy. 116 is `risk:high` and gets a plan run when its turn comes; 117 is `needs-human`. **125** ran at 16:00 UTC and died in implement on the token cap (see "The 125 run" above); it is parked `status:in-progress` until the owner releases it.
 - **118 closed** `status:done` via PR 126 (merged 13:12 UTC).
 - **Yesterday's two failed runs self-healed:** bug-fixer 43044016537 (15:00, apply 504) was followed by the good 15:45 rerun; reviewer 43059024527 (16:30, `gather-inputs.sh json` exit 1, transient) was followed by a clean 17:30 run. Reviewer 43096480238 (20:30) was a `startup_failure` with no jobs, known noise.
 - **Not yet adopted on the target:** `nimeshjm/fantasy-football` `factory.yml` has no `amigos`, `plan_review` or `limits.max_context_chars` blocks, so plan comments carry no amigos row and any human approval merges. Copy them from `examples/fantasy-football/factory.yml` when wanted.
@@ -120,7 +142,7 @@ Not exercised live: no workflow dispatched, nothing deployed, nothing committed.
 
 **Then, within five minutes (13:13 to 13:17 UTC):** the owner approved Dependabot PRs 128 (`wrangler` 4.158.0) and 127 (`@cloudflare/workers-types`); the trigger dispatched reviewer runs 43225315417 and 43225329072, both answered `human approved` and merged. The Deploy of the 126 merge (run 43225059867, sha `76264a9`) had failed with Cloudflare API error 10013 on the secrets endpoint, but the two merges that followed deployed cleanly (`76339eb`, `fafacb8`), so the live site carries all three changes and the 10013 was a transient. Verifier runs 43225622953 (passed) and 43225740194 followed the deploys. With 118 closed, the 13:15 tick dispatched the builder on 107 (run 43225593828, `builder-202611121315-issue-107`): the first spike apply against GitHub, live. Reviewer run 43225912189 then picked up PR 88 (the lit `vitest` group bump, `needs-human`) from a check-suite event.
 
-**Check next:** the 107 run. Success is a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed. If it fails in the harness, the issue stays `status:backlog` and the tick retries it (subject to the failure backoff above); read `stop_reason` and compare with the 107 history below. Then 125 (backlog, `risk:low size:S`) is the next builder pickup. `/status` `last_tick.decisions` and the `factory-audit` skill (`.claude/skills/factory-audit/`) show both.
+**Check next:** the 107 run. Success is a `<!-- factory:findings -->` comment on 107 ending in `## Evidence`, `status:done`, issue closed. If it fails in the harness, the issue stays `status:backlog` and the tick retries it (subject to the failure backoff above); read `stop_reason` and compare with the 107 history below. 125 (`risk:low size:S`) already ran and failed on 2026-11-12 16:00; release it as described at the top of Do next. `/status` `last_tick.decisions` and the `factory-audit` skill (`.claude/skills/factory-audit/`) show both.
 
 **Earlier state (checked 2026-11-02 15:50 UTC), kept for the history of 107 and 118.**
 
@@ -254,7 +276,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 - **35 and 106** epics, planned 2026-11-12, `status:plan-review needs-human`: read the plan comment, then `plan:approved` or relabel. **115** epic, `status:backlog risk:high`, will be planned next.
 - **117** "Spike other football API providers", `spike risk:low`, held with `needs-human`.
 - **116** "Remove API-Football", `risk:high size:S`, gets a plan run when it reaches the front of the queue, then waits for `plan:approved`.
-- **125** "Liga Portugal Dream Team page as best XI source", `risk:low size:S`, the next real build.
+- **125** "Liga Portugal Dream Team page as best XI source", `risk:low size:S`. Planned and died in implement on 2026-11-12 16:00 (run 43253957669, `limit_total_tokens`); `status:in-progress`, plan comment posted, no branch. Release to `status:backlog` after the salvage build is pushed.
 - **108 to 110** awards implementation (epic 106) and **100 to 103** (epic 35) are `author-not-trusted` (bot-filed, no `factory:accepted`).
 
 **Verification of the Plan B working tree (2026-10-30, uncommitted at the time of writing):**
@@ -291,7 +313,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
   - Gemma 4 allows 16K tokens a minute, which is less than one request.
   - flash-lite throttles so far are per-minute token limits, not daily ones.
   - The 400/day in `factory.config.json` is the factory's own ceiling, not a Google limit.
-- **Flash budget:** 60 flash requests a day across three models, so about two spikes a day. When every model on a list is exhausted the run fails and its issue stays `status:in-progress`. A switch can finish a run on an older model. The control plane doesn't track exhaustion, so each run spends one request per exhausted model to find out.
+- **Flash budget:** 60 flash requests a day across three models, so about two spikes a day. When every model on a list is exhausted the run fails; since the salvage step (2026-11-12) a failed builder or bug-fixer run is reset to `status:backlog` by the pipeline. A switch can finish a run on an older model. The control plane doesn't track exhaustion, so each run spends one request per exhausted model to find out.
 - **Calls the cap doesn't see:**
   - Throttle and 503 retries count against a run's model-call cap, so a 429 storm or a long outage can end a run early.
   - Strands' summarisation calls are not counted, so ledger counts can under-report slightly.
@@ -305,7 +327,7 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 - **Search budget:** 10 searches and 20 fetches per phase. Tavily's free tier allows about 1,000 searches a month.
 - **Big JSON:** bodies over 2 MB get no key tree. Very wide JSON drops samples and can still fill the 20,000 chars.
 - **Prompt injection:** with `["*"]`, an injected page could get data into a URL or search query; only the prompts forbid it. The agent holds no GitHub token and the repo is public. DNS rebinding between the address check and the connect is not prevented.
-- **Stuck runs:** any failed builder or bug-fixer implement run leaves its issue `status:in-progress`, and a human resets it to `status:backlog`.
+- **Stuck runs:** until 2026-11-12 any failed builder or bug-fixer implement run left its issue `status:in-progress` for a human to reset. The salvage post-step (`scripts/salvage-run.sh`) now resets it, pushes the work to `backup/<N>-attempt<k>-<stop_reason>` and comments `<!-- factory:failure -->`; a run that dies before apply never set the label in the first place. Runs cancelled or lost mid-apply can still leave it; the dashboard's `stuck-in-progress` row covers that.
 
 **Merge and review**
 - **The reviewer does not notice deleted tests.** PR 126 (bug-fixer rerun on 118) removed the existing "rate limits back-to-back probes" test and added none for the new error path, yet `coverage` and `plan_drift` passed and the verdict was approve. The first attempt (`backup/118-attempt1-504`) had the right test file. Check test diffs by hand on `lit` PRs; a deterministic check (fail `coverage` when a `test/**` diff removes more `it(` blocks than it adds) would catch it.

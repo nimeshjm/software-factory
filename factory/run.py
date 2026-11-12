@@ -15,13 +15,24 @@ from . import telemetry
 from .config import (ROOT, ProfileError, apply_spike_model, issue_labels, load_config, load_profile,
                      resolve_run_spec)
 from .guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard, ToolCallLog, ToolGuard, build_context_kwargs
+from .guards.budget_guard import BudgetGuard
 from .guards.output_guard import redact, scan_obj
 from .tools.profile import set_profile
 from .prompts import build_task_message, load_system_prompt
 from .schemas import GuardEvent, RunResult, ToolCall, proposal_model_for
 from .schemas.models import ModelSwitch
 
-FINALIZE_PROMPT = "Time budget is spent. Emit the final structured proposal now, based on what you have."
+FINALIZE_PROMPT = (
+    "Your budget for this phase is spent. If you have uncommitted changes and the git_commit tool is available, "
+    "call it once now. Then emit the final structured proposal based on what you have, marking in notes what is "
+    "incomplete. Do not call any other tool.")
+
+
+def needs_finalize(stop_reason: str, has_proposal: bool, nudged: bool) -> bool:
+    """One more short invocation when the first ended without a proposal after a nudge or on a token/turn limit."""
+    if has_proposal:
+        return False
+    return (stop_reason == "end_turn" and nudged) or stop_reason in ("limit_turns", "limit_total_tokens")
 
 
 def _build_model(spec, fake: bool):
@@ -127,8 +138,10 @@ def run(args: argparse.Namespace) -> int:
 
         quota = QuotaGuard(spec.max_model_calls, log)
         latency = LatencyGuard(spec.timeout_seconds, log)
+        budget = BudgetGuard(spec.limits, spec.max_model_calls, quota, log,
+                             soft_fraction=float(spec.context.get("budget_soft_fraction", 0.85)))
         tool_log = ToolCallLog()
-        hooks = [ToolGuard(log, profile), tool_log, quota, latency,
+        hooks = [ToolGuard(log, profile), tool_log, quota, latency, budget,
                  ContextGuard(int(spec.context.get("tool_result_max_chars", 20000)), log)]
         trace_attrs: dict[str, Any] = {"factory.run_id": str(run_id), "factory.agent": args.agent,
                                        "factory.phase": args.phase, "factory.model": spec.model_key, "factory.model_id": spec.model_id,
@@ -153,8 +166,12 @@ def run(args: argparse.Namespace) -> int:
         )
         task = build_task_message(inputs, args.agent, args.phase, [out], profile)
         res = agent(task, limits=spec.limits, structured_output_model=model_cls)
-        if res.stop_reason == "end_turn" and res.structured_output is None and latency.nudged:
+        if needs_finalize(res.stop_reason, res.structured_output is not None, latency.nudged or budget.nudged):
+            first_stop = res.stop_reason
+            log.record("budget_guard", "finalize", first_stop)
             res = agent(FINALIZE_PROMPT, limits={"turns": 3}, structured_output_model=model_cls)
+            if res.structured_output is None and res.stop_reason == "end_turn":
+                res.stop_reason = first_stop  # keep the original limit value in result.json
 
         result.stop_reason = res.stop_reason
         result.cycles = int(res.metrics.cycle_count)
