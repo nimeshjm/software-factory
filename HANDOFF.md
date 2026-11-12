@@ -1,8 +1,8 @@
 # Handoff: software factory
 
-Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-12 18:40 UTC (salvage step, budget wrap-up and shell rule built after the 125 run died). Everything below is the state at that time.
+Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-12 16:45 UTC (salvage step, budget wrap-up and shell rule built after the 125 run died). Everything below is the state at that time.
 
-## Do next (checked 2026-11-12 17:10 UTC; salvage, budget wrap-up and shell rule built 2026-11-12 ~18:40 UTC, not committed)
+## Do next (checked 2026-11-12 17:10 UTC; salvage, budget wrap-up and shell rule built and pushed 2026-11-12 16:45 UTC, commit d7bffa0)
 
 **Failed implement runs: salvage, budget wrap-up, cheaper test output (built 2026-11-12, uncommitted, not deployed).** Prompted by the 125 run (below). Contract in `CONTRACTS.md`: the salvage bullet under Post-step rules, `backup/<N>-attempt<k>-<stop_reason>` under Branch conventions, and "Budget wrap-up" plus "Shell tool and context size" under Harness CLI.
 
