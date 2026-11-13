@@ -91,7 +91,7 @@ describe("buildDashboard", () => {
           issue(125, ["bug", "status:backlog", "priority:2"]),
           issue(130, ["feature", "status:backlog", "risk:low"]),
         ],
-        openPRs: [pr(88, "dependabot/npm_and_yarn/vitest", { author: "dependabot[bot]", labels: ["autonomy:lit"] }), pr(99, "fix/9-x", { labels: ["needs-human"] })],
+        openPRs: [pr(88, "dependabot/npm_and_yarn/vitest", { author: "dependabot[bot]", labels: ["autonomy:lit"] }), pr(99, "fix/9-x", { labels: ["needs-human"] }), pr(98, "feat/4-y", { labels: ["needs-human", "revise:attempted"] })],
       }),
     );
     expect(d.blocked.map((b) => [b.kind, b.subject, b.needs_human])).toEqual([
@@ -107,9 +107,12 @@ describe("buildDashboard", () => {
       ["author-not-trusted", "issue:101", true],
       ["blocked-by", "issue:102", false],
       ["lit-pr", "pr:88", true],
+      ["needs-human-pr", "pr:98", true],
       ["needs-human-pr", "pr:99", true],
       ["bugs-first", "factory", false],
     ]);
+    expect(d.blocked.find((b) => b.subject === "pr:98")?.reason).toBe("revise attempted; a human must take over (see the factory comments on the PR)");
+    expect(d.blocked.find((b) => b.subject === "pr:99")?.reason).toContain("could not handle");
     expect(d.blocked.find((b) => b.kind === "stuck-in-progress")?.action).toBe(`gh issue edit 50 -R ${REPO} --remove-label status:in-progress --add-label status:backlog`);
     expect(d.blocked.find((b) => b.kind === "bugs-first")?.title).toBe("Open bug #125 at priority 1 or 2");
     const builder = d.next.queue.find((q) => q.agent === "builder")!;
@@ -212,6 +215,28 @@ describe("buildDashboard", () => {
     expect(dispatched.subject).toBe(`issue:${first.number}`);
     expect(first.number).toBe(9);
     expect(candidateQueue(state, ["feature", "enhancement"], NOW).map((c) => c.issue.number)).toEqual([9, 2, 4]);
+  });
+
+  it("revise candidates lead the queue row and match the dispatch", () => {
+    const openIssues = [issue(2, ["feature", "status:backlog", "risk:low"])];
+    const bot = "software-factory-agent-bot[bot]";
+    const openPRs = [pr(40, "feat/7-thing", { author: bot, labels: ["revise:requested"], title: "Thing" }), pr(41, "fix/9-x", { author: bot, labels: ["revise:requested"] }), pr(42, "feat/12-h", { author: "alice", labels: ["revise:requested"] })];
+    const runs = [run({ id: "x", agent: "bug-fixer", subject: "revise:9", status: "failed", dispatched_at: "2026-11-12T13:00:00Z", finished_at: "2026-11-12T13:10:00Z" })];
+    const d = buildDashboard(input({ openIssues, openPRs, runs }));
+    const b = d.next.queue.find((q) => q.agent === "builder")!.items;
+    expect(b[0]).toMatchObject({ number: 40, title: "Thing", eligible: true, reason: "revise", url: `https://github.com/${REPO}/pull/40` });
+    expect(b.map((i) => i.number)).toEqual([40, 2]);
+    const f = d.next.queue.find((q) => q.agent === "bug-fixer")!.items;
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ number: 41, eligible: false });
+    expect(f[0].reason).toMatch(/^retry-after:/);
+    const state: TickState = {
+      paused: false, quota: { daily: 400, usedToday: 0, reservedInFlight: 0 }, inFlight: [], recentRuns: [], openPRs: openPRs.map((p) => ({ number: p.number, headRef: p.headRef, body: p.body, author: p.author, labels: p.labels })),
+      openIssues: openIssues.map((i) => ({ number: i.number, labels: i.labels, authorAssociation: i.authorAssociation, body: i.body })),
+      agentSpecs: AGENT_SPECS, maxOpenFactoryPrs: 3, unlabeledIssues: [],
+    };
+    const first = planTick(state, NOW).find((x) => x.kind === "dispatch" && x.agent === "builder") as any;
+    expect(first.subject).toBe("revise:7");
   });
 });
 

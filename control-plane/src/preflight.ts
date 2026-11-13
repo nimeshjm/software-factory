@@ -84,6 +84,12 @@ export function prReferences(pr: PRInfo, issue: number): boolean {
   return new RegExp(`#${issue}(?!\\d)`).test(pr.body ?? "");
 }
 
+/** The issue number in a factory head ref (`feat/N-...` or `fix/N-...`), else null. */
+export function factoryHeadIssue(headRef: string): number | null {
+  const m = /^(?:feat|fix)\/(\d+)-/.exec(headRef);
+  return m ? Number(m[1]) : null;
+}
+
 function slug(s: string): string {
   return s.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 }
@@ -168,6 +174,33 @@ export function candidateQueue(
       if (reason === null) reason = failureBackoff(`issue:${issue.number}`, state.recentRuns ?? [], now);
       return { issue, reason };
     });
+}
+
+/** An open factory PR waiting for its one revise run, with the reason it would be passed over (null = dispatchable). */
+export interface ReviseCandidate {
+  pr: number;
+  issue: number;
+  agent: "builder" | "bug-fixer";
+  reason: string | null;
+}
+
+/** Pure: open factory PRs labelled revise:requested (and not revise:attempted), by PR number. */
+export function reviseCandidates(state: Pick<TickState, "openPRs" | "recentRuns">, now: Date): ReviseCandidate[] {
+  const out: ReviseCandidate[] = [];
+  for (const p of state.openPRs) {
+    const labels = p.labels ?? [];
+    const issue = factoryHeadIssue(p.headRef);
+    if (issue === null || !labels.includes("revise:requested") || labels.includes("revise:attempted")) continue;
+    // Never push to a PR a human parked, nor to a human's PR (the workflow would deny it and the denial is no backoff).
+    if (labels.includes("needs-human") || !p.author.endsWith("[bot]")) continue;
+    out.push({
+      pr: p.number,
+      issue,
+      agent: p.headRef.startsWith("feat/") ? "builder" : "bug-fixer",
+      reason: failureBackoff(`revise:${issue}`, state.recentRuns ?? [], now),
+    });
+  }
+  return out.sort((a, b) => a.pr - b.pr);
 }
 
 /** Pure: an open bug at priority 1 or 2 that no human is parked on; while one exists the builder waits (bugs_first). */
@@ -284,8 +317,16 @@ export function planTick(state: TickState, now: Date): Decision[] {
     return { chosen: null, blocked };
   };
 
+  // Revise first: finishing a PR that is already open ignores backpressure and bugs_first, not quota or busy.
+  const revises = reviseCandidates(state, now);
+  const dispatchRevise = (agent: string): boolean => {
+    const r = revises.find((c) => c.agent === agent && c.reason === null);
+    return r ? dispatch(agent, `revise:${r.issue}`, r.issue, r.pr, "revise") : false;
+  };
+
   // bug-fixer
-  const bugs = candidateQueue(state, BUG_TYPES, now);
+  const bugRevised = dispatchRevise("bug-fixer");
+  const bugs = bugRevised ? [] : candidateQueue(state, BUG_TYPES, now);
   if (bugs.length) {
     const { chosen, blocked } = pick(bugs);
     if (chosen) dispatch("bug-fixer", `issue:${chosen.number}`, chosen.number, null, "");
@@ -293,7 +334,8 @@ export function planTick(state: TickState, now: Date): Decision[] {
   }
 
   // builder
-  const features = candidateQueue(state, BUILDER_TYPES, now);
+  const featureRevised = dispatchRevise("builder");
+  const features = featureRevised ? [] : candidateQueue(state, BUILDER_TYPES, now);
   if (features.length) {
     if (countFactoryPRs(state.openPRs) >= state.maxOpenFactoryPrs) {
       decisions.push({ kind: "skip", agent: "builder", reason: "backpressure" });

@@ -3,7 +3,7 @@
 #  1. control-plane/wrangler.jsonc vars: TARGET_REPO, FACTORY_REPO, TARGET_DEFAULT_BRANCH, FACTORY_REF,
 #     DAILY_MODEL_CALLS, MAX_OPEN_FACTORY_PRS.
 #  2. control-plane/src/config.ts AGENT_SPECS maxModelCalls / timeoutMinutes per agent equal the config
-#     (agents with phase_overrides: sum over their phases).
+#     (agents with phase_overrides: sum over their `phases`, not `extra_phases`; an extra phase must fit the sum).
 #  3. The inline timeout-minutes map in .github/workflows/agent-run.yml: for every agent,
 #     map[agent] >= timeout_minutes + 5 (headroom for checkout, install and apply steps), and the map has
 #     exactly the agents in the config. The map is a ceiling, not an equality, because the verifier also waits
@@ -34,10 +34,22 @@ check_var DAILY_MODEL_CALLS "$(jq -r '.quota.daily_model_calls' "$CONFIG")"
 check_var MAX_OPEN_FACTORY_PRS "$(jq -r '.quota.max_open_factory_prs' "$CONFIG")"
 
 # --- expected per-agent budgets from the config: "<agent> <calls> <minutes>"
-expected="$(jq -r '.agents | to_entries[] | .key as $k | .value
-  | (if .phase_overrides then ([.phase_overrides[] | .max_model_calls // 0] | add) else .max_model_calls end) as $c
-  | (if .phase_overrides then ([.phase_overrides[] | .timeout_minutes // 0] | add) else .timeout_minutes end) as $t
+# Sums run over `.phases` only (the default sequence); a phase without an override uses the agent-level value.
+expected="$(jq -r '.agents | to_entries[] | .key as $k | .value as $v
+  | (if $v.phase_overrides then ([$v.phases[] | ($v.phase_overrides[.].max_model_calls // $v.max_model_calls // 0)] | add) else $v.max_model_calls end) as $c
+  | (if $v.phase_overrides then ([$v.phases[] | ($v.phase_overrides[.].timeout_minutes // $v.timeout_minutes // 0)] | add) else $v.timeout_minutes end) as $t
   | "\($k) \($c) \($t)"' "$CONFIG")"
+
+# An extra phase (dispatched explicitly, never in the default sequence) must fit inside the agent's budget.
+while read -r agent calls mins; do
+  while read -r xp xc xt; do
+    [ -n "$xp" ] || continue
+    if [ "$xc" -gt "$calls" ] || [ "$xt" -gt "$mins" ]; then
+      bad "$agent extra phase $xp exceeds the agent budget ($xc calls / $xt minutes > $calls / $mins)"
+    fi
+  done < <(jq -r --arg a "$agent" '.agents[$a] as $v | ($v.extra_phases // [])[]
+    | "\(.) \($v.phase_overrides[.].max_model_calls // $v.max_model_calls // 0) \($v.phase_overrides[.].timeout_minutes // $v.timeout_minutes // 0)"' "$CONFIG")
+done <<<"$expected"
 
 # --- 2. control-plane AGENT_SPECS. Lines look like: builder: { maxModelCalls: 25 + 15 + 60, timeoutMinutes: 10 + 10 + 40 },
 ts_sum() { tr -d ' ' <<<"$1" | awk -F+ '{s=0; for (i=1;i<=NF;i++) s+=$i; print s}'; }

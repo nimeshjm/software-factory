@@ -160,8 +160,20 @@
           },
           "max_model_calls": 60,
           "timeout_minutes": 40
+        },
+        "revise": {
+          "limits": {
+            "turns": 60,
+            "total_tokens": 900000,
+            "output_tokens": 60000
+          },
+          "max_model_calls": 60,
+          "timeout_minutes": 40
         }
-      }
+      },
+      "extra_phases": [
+        "revise"
+      ]
     },
     "bug-fixer": {
       "model": "strong",
@@ -221,8 +233,20 @@
           },
           "max_model_calls": 60,
           "timeout_minutes": 40
+        },
+        "revise": {
+          "limits": {
+            "turns": 60,
+            "total_tokens": 900000,
+            "output_tokens": 60000
+          },
+          "max_model_calls": 60,
+          "timeout_minutes": 40
         }
-      }
+      },
+      "extra_phases": [
+        "revise"
+      ]
     },
     "reviewer": {
       "model": "strong",
@@ -340,7 +364,9 @@
       "ci-fix:attempted",
       "factory:accepted",
       "spike",
-      "security"
+      "security",
+      "revise:requested",
+      "revise:attempted"
     ]
   }
 }

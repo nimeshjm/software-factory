@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planTick, parseDependencies, failureBackoff, type TickState, type IssueInfo, type RecentRun } from "../src/preflight";
+import { planTick, parseDependencies, failureBackoff, reviseCandidates, type TickState, type IssueInfo, type RecentRun } from "../src/preflight";
 import { AGENT_SPECS } from "../src/config";
 
 const NOW = new Date("2026-10-21T10:07:00Z");
@@ -245,5 +245,56 @@ describe("planTick failure backoff", () => {
     const d = planTick(base({ openIssues: [feat(7)], recentRuns: [rr("failed", 600), rr("failed", 300), rr("failed", 10)] }), NOW);
     expect(dispatched(d)).toEqual([]);
     expect(JSON.stringify(d)).toContain("#7:failure-cap:2026-10-22T00:07Z");
+  });
+});
+
+const rpr = (number: number, headRef: string, labels: string[]) => ({ number, headRef, body: "", author: "software-factory-agent-bot[bot]", labels });
+
+describe("reviseCandidates", () => {
+  it("filters by label and head, picks the agent by prefix, orders by PR number", () => {
+    const openPRs = [
+      rpr(30, "fix/9-crash", ["revise:requested"]),
+      rpr(20, "feat/7-thing", ["revise:requested"]),
+      rpr(21, "feat/8-done", ["revise:requested", "revise:attempted"]),
+      rpr(22, "feat/10-none", []),
+      rpr(23, "chore/5-x", ["revise:requested"]),
+      rpr(24, "feat/nodigits", ["revise:requested"]),
+      rpr(25, "feat/11-parked", ["revise:requested", "needs-human"]),
+      { ...rpr(26, "feat/12-x", ["revise:requested"]), author: "alice" },
+    ];
+    expect(reviseCandidates({ openPRs, recentRuns: [] }, NOW)).toEqual([
+      { pr: 20, issue: 7, agent: "builder", reason: null },
+      { pr: 30, issue: 9, agent: "bug-fixer", reason: null },
+    ]);
+  });
+  it("carries the revise:N backoff reason", () => {
+    const openPRs = [rpr(20, "feat/7-thing", ["revise:requested"])];
+    const recentRuns = [rr("failed", 30, "revise:7")];
+    expect(reviseCandidates({ openPRs, recentRuns }, NOW)[0].reason).toBe("retry-after:2026-10-21T10:37Z");
+  });
+});
+
+describe("planTick revise", () => {
+  const revPR = (n: number, ref: string) => rpr(n, ref, ["revise:requested"]);
+  it("revise before new work", () => {
+    const d = planTick(base({ openPRs: [revPR(40, "feat/7-thing")], openIssues: [feat(8)] }), NOW);
+    expect(dispatched(d)).toHaveLength(1);
+    expect(dispatched(d)[0]).toMatchObject({
+      agent: "builder", subject: "revise:7", inputs: { issue: "7", pr: "40", phase: "revise" },
+    });
+    expect(d.filter((x) => x.kind === "skip" && x.agent === "builder")).toEqual([]);
+  });
+  it("fix PR goes to bug-fixer", () => {
+    const d = planTick(base({ openPRs: [revPR(41, "fix/9-crash")] }), NOW);
+    expect(dispatched(d).map((x) => [x.agent, x.subject, x.inputs.pr, x.inputs.phase])).toEqual([["bug-fixer", "revise:9", "41", "revise"]]);
+  });
+  it("revise ignores backpressure", () => {
+    const openPRs = [revPR(40, "feat/7-thing"), rpr(41, "feat/8-a", []), rpr(42, "fix/3-b", [])];
+    const d = planTick(base({ openPRs, openIssues: [feat(8)], maxOpenFactoryPrs: 3 }), NOW);
+    expect(dispatched(d).map((x) => x.subject)).toEqual(["revise:7"]);
+  });
+  it("backed-off revise falls through to the normal queue", () => {
+    const d = planTick(base({ openPRs: [revPR(40, "feat/7-thing")], openIssues: [feat(8)], recentRuns: [rr("failed", 30, "revise:7")] }), NOW);
+    expect(dispatched(d).map((x) => x.subject)).toEqual(["issue:8"]);
   });
 });

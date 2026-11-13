@@ -104,6 +104,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           AGENT: ${{ inputs.agent }}
+          PHASE: ${{ inputs.phase }}
           PR: ${{ inputs.pr }}
           DEFAULT_BRANCH: ${{ steps.cfg.outputs.default_branch }}
           TARGET_REPO: ${{ steps.cfg.outputs.target_repo }}
@@ -111,14 +112,22 @@ jobs:
         run: |
           ref="$DEFAULT_BRANCH"
           repo="$TARGET_REPO"
-          if [ "$AGENT" = "reviewer" ] && [ -n "$PR" ]; then
+          if [ "$PHASE" = "revise" ] && [ -z "$PR" ]; then
+            echo "::error::phase revise requires pr"
+            exit 1
+          fi
+          revise=false
+          if { [ "$AGENT" = "builder" ] || [ "$AGENT" = "bug-fixer" ]; } && [ "$PHASE" = "revise" ] && [ -n "$PR" ]; then revise=true; fi
+          if { [ "$AGENT" = "reviewer" ] && [ -n "$PR" ]; } || [ "$revise" = "true" ]; then
             author="$(jq -r '.author' inputs/pr.json)"
             cross="$(gh pr view "$PR" --repo "$repo" --json isCrossRepository --jq .isCrossRepository)"
-            case "$author" in
-              "app/$APP_SLUG"|app/dependabot) ;;
+            # A revise run pushes to the branch, so only the factory's own PRs qualify; dependabot's do not.
+            if [ "$revise" = "true" ]; then allowed_authors="app/$APP_SLUG"; else allowed_authors="app/$APP_SLUG app/dependabot"; fi
+            case " $allowed_authors " in
+              *" $author "*) ;;
               *)
                 echo "denied=true" >> "$GITHUB_OUTPUT"
-                echo "::error::Refusing to check out PR #$PR: author '$author' is not app/$APP_SLUG or app/dependabot"
+                echo "::error::Refusing to check out PR #$PR: author '$author' is not one of: $allowed_authors"
                 exit 1 ;;
             esac
             if [ "$cross" = "true" ]; then
@@ -150,14 +159,27 @@ jobs:
           git -C work config user.email "$APP_SLUG@users.noreply.github.com"
 
       # The implement prompt tells the agent it is already on feat|fix/<N>-<slug>; this is where that happens.
+      # A revise run is already on the PR head (checked out above); it only records and verifies the branch name.
       - name: Create work branch
-        if: ${{ (inputs.agent == 'builder' || inputs.agent == 'bug-fixer') && inputs.issue != '' }}
+        if: ${{ (inputs.agent == 'builder' || inputs.agent == 'bug-fixer') && inputs.issue != '' && inputs.phase != 'revise' }}
         env:
           AGENT: ${{ inputs.agent }}
         run: |
           branch="$(uv run --frozen python -m factory.policy branch --agent "$AGENT" --issue inputs/issue.json)"
           printf '%s' "$branch" >inputs/branch.txt
           git -C work checkout -b "$branch"
+          echo "branch: $branch"
+
+      - name: Record PR branch (revise)
+        if: ${{ (inputs.agent == 'builder' || inputs.agent == 'bug-fixer') && inputs.phase == 'revise' && inputs.pr != '' }}
+        run: |
+          branch="$(jq -r '.headRefName' inputs/pr.json)"
+          printf '%s' "$branch" >inputs/branch.txt
+          current="$(git -C work rev-parse --abbrev-ref HEAD)"
+          if [ "$current" != "$branch" ]; then
+            echo "::error::Checked out '$current' but the PR head is '$branch'"
+            exit 1
+          fi
           echo "branch: $branch"
 
       - uses: actions/setup-node@v4
@@ -279,6 +301,7 @@ jobs:
           GH_TOKEN: ${{ steps.app2.outputs.token }}
           RUN_ID: ${{ steps.ids.outputs.run_id }}
           ISSUE: ${{ inputs.issue }}
+          PR: ${{ inputs.pr }}
           AGENT: ${{ inputs.agent }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: scripts/salvage-run.sh

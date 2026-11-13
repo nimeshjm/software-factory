@@ -27,6 +27,24 @@ def test_resolve_overrides():
         C.resolve_run_spec(cfg, "ghost", "x")
 
 
+def test_revise_extra_phase():
+    cfg = C.load_config()
+    for agent in ("builder", "bug-fixer"):
+        rev = C.resolve_run_spec(cfg, agent, "revise")
+        imp = C.resolve_run_spec(cfg, agent, "implement")
+        assert rev.tools == imp.tools and rev.limits == imp.limits
+        assert rev.max_model_calls == imp.max_model_calls and rev.timeout_minutes == imp.timeout_minutes
+        assert "revise" in C.agent_phases(cfg["agents"][agent])
+    with pytest.raises(C.ConfigError) as e:
+        C.resolve_run_spec(cfg, "builder", "nope")
+    assert "phases:" in str(e.value) and "extra_phases: ['revise']" in str(e.value)
+    with pytest.raises(C.ConfigError):
+        C.resolve_run_spec(cfg, "triage", "revise")
+    from factory.schemas import BuildProposal
+    assert proposal_model_for("builder", "revise") is BuildProposal
+    assert proposal_model_for("bug-fixer", "revise") is BuildProposal
+
+
 def test_every_configured_tool_exists():
     cfg = C.load_config()
     for a in cfg["agents"].values():

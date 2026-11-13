@@ -45,14 +45,20 @@ def load_config(path: str | Path | None = None) -> dict[str, Any]:
         return json.load(fh)
 
 
+def agent_phases(a: dict[str, Any]) -> list[str]:
+    """Phases an agent may run: the pipeline phases plus the optional extra_phases (e.g. revise)."""
+    return list(a.get("phases", [])) + list(a.get("extra_phases", []))
+
+
 def resolve_run_spec(cfg: dict[str, Any], agent: str, phase: str) -> RunSpec:
     agents = cfg.get("agents", {})
     if agent not in agents:
         raise ConfigError(f"unknown agent {agent!r}; known: {sorted(agents)}")
     a = agents[agent]
     phases = a.get("phases", [])
-    if phase not in phases:
-        raise ConfigError(f"agent {agent!r} has no phase {phase!r}; phases: {phases}")
+    extra = a.get("extra_phases", [])
+    if phase not in agent_phases(a):
+        raise ConfigError(f"agent {agent!r} has no phase {phase!r}; phases: {phases}; extra_phases: {extra}")
 
     eff: dict[str, Any] = {k: a[k] for k in OVERRIDABLE if k in a}
     for k, v in (a.get("phase_overrides", {}).get(phase) or {}).items():

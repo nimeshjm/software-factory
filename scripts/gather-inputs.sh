@@ -71,13 +71,15 @@ mode_json() {
 }
 
 mode_phases() {
-  local allowed phases plan
-  allowed="$(jq -r --arg a "$AGENT" '.agents[$a].phases // empty | join(" ")' "$CONFIG")"
-  [ -n "$allowed" ] || die "unknown agent: $AGENT"
+  local allowed default phases plan
+  default="$(jq -r --arg a "$AGENT" '.agents[$a].phases // empty | join(" ")' "$CONFIG")"
+  [ -n "$default" ] || die "unknown agent: $AGENT"
+  # An explicit PHASE may also name an extra phase (e.g. revise); the default sequence is .phases only.
+  allowed="$(jq -r --arg a "$AGENT" '.agents[$a] | ((.phases // []) + (.extra_phases // [])) | join(" ")' "$CONFIG")"
   if [ -n "$PHASE" ]; then
     case " $allowed " in *" $PHASE "*) phases="$PHASE" ;; *) die "phase '$PHASE' not valid for $AGENT (allowed: $allowed)" ;; esac
   else
-    phases="$allowed"
+    phases="$default"
     case "$AGENT" in
       builder|bug-fixer)
         if [ -n "$ISSUE" ] && jq -e 'any(.labels[]; . == "plan:approved")' "$INPUTS_DIR/issue.json" >/dev/null; then

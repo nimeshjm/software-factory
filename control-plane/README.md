@@ -106,6 +106,8 @@ Decision kinds in `last_tick.decisions`:
 
 Candidates for the bug-fixer and builder are open issues of the right type labelled `status:backlog`, plus those labelled `status:plan-review` and `plan:approved` (a human approved the plan, so the agent resumes with phase `""`). A `risk:high` feature is dispatched without `plan:approved`; the pipeline stops after the plan.
 
+Revise candidates (`preflight.reviseCandidates`) are open factory PRs (head `feat/N-*` or `fix/N-*`) labelled `revise:requested` and not `revise:attempted`; `feat` goes to the builder, `fix` to the bug-fixer. The first one without a backoff is dispatched before the agent's issue candidates, ignoring `backpressure` and `bugs_first`, with subject `revise:N` and inputs `issue=N`, `pr=<PR>`, `phase=revise`; its failure backoff is keyed on `revise:N`, and a dispatched revise makes that agent's normal candidate skip `in_flight` for the tick.
+
 An agent absent from the decisions was not a candidate on that tick (nothing in its backlog, or it runs on a schedule such as the hourly Dependabot review and the daily incident responder).
 
 ## Dashboard

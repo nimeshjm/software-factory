@@ -6,7 +6,7 @@ the failing test first. You write no code. Tools: `read_file`, `list_files`, `se
 ## Read order (always, before anything else)
 1. The context files listed in the Target profile section below, in the order given. They are copies of the
    target repo's default branch under `inputs/context/` if the workspace lacks them.
-2. `inputs/run.json` and the inputs named in this prompt.
+2. The inputs: `run.json` fields and the inputs named in this prompt are already in the task message below, under their own headings; do not `read_file` them (`read_file` sees only the workspace).
 If a file is missing, say so in your notes and continue; never invent its content. Inputs under `inputs/`
 are read-only.
 Inputs: `inputs/issue.json`, `inputs/factory.json`, and the research artifact `out/research.md` (its path is

@@ -7,6 +7,7 @@ import {
   BUG_TYPES,
   BUILDER_TYPES,
   candidateQueue,
+  reviseCandidates,
   countFactoryPRs,
   isDependabot,
   prReferences,
@@ -384,7 +385,9 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
     if (p.labels.includes("needs-human")) {
       add({
         kind: "needs-human-pr", subject: `pr:${p.number}`, title: p.title,
-        reason: "The pipeline could not handle this PR (needs-human); the reviewer skips it.",
+        reason: p.labels.includes("revise:attempted")
+          ? "revise attempted; a human must take over (see the factory comments on the PR)"
+          : "The pipeline could not handle this PR (needs-human); the reviewer skips it.",
         action: `Fix it by hand, then gh pr edit ${p.number} -R ${targetRepo} --remove-label needs-human`, url,
       });
     } else if (p.labels.includes("autonomy:lit")) {
@@ -435,6 +438,16 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
   blocked.sort((a, b) => BLOCK_ORDER.indexOf(a.kind) - BLOCK_ORDER.indexOf(b.kind) || a.subject.localeCompare(b.subject));
 
   // ---- next
+  const reviseItems = (agent: string): QueueItem[] =>
+    reviseCandidates(stateLike, now)
+      .filter((r) => r.agent === agent)
+      .map((r) => {
+        const p = prs.find((x) => x.number === r.pr);
+        return {
+          number: r.pr, title: p?.title ?? "", eligible: r.reason === null, reason: r.reason ?? "revise",
+          labels: p?.labels ?? [], url: p?.htmlUrl ?? prUrl(targetRepo, r.pr),
+        };
+      });
   const toItem = (c: { issue: IssueInfo; reason: string | null }): QueueItem => ({
     number: c.issue.number, title: titleOf.get(c.issue.number) ?? "", eligible: c.reason === null, reason: c.reason, labels: c.issue.labels,
     url: issues.find((i) => i.number === c.issue.number)?.htmlUrl ?? issueUrl(targetRepo, c.issue.number),
@@ -442,8 +455,8 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
   const unlabeled = issues.filter((i) => i.labels.length === 0).sort((a, b) => a.number - b.number);
   const queue = [
     { agent: "triage", gate: inFlightAgents.has("triage") ? "in_flight" : null, items: unlabeled.map((i) => ({ number: i.number, title: i.title, eligible: true, reason: null, labels: [], url: i.htmlUrl })) },
-    { agent: "bug-fixer", gate: bugGate, items: bugQueue.map(toItem) },
-    { agent: "builder", gate: builderGate, items: builderQueue.map(toItem) },
+    { agent: "bug-fixer", gate: bugGate, items: [...reviseItems("bug-fixer"), ...bugQueue.map(toItem)] },
+    { agent: "builder", gate: builderGate, items: [...reviseItems("builder"), ...builderQueue.map(toItem)] },
   ];
 
   const scheduled: DashboardDoc["next"]["scheduled"] = [];

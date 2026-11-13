@@ -284,8 +284,10 @@ apply_implement() {
 post_review() { # <proposal> <head_sha>
   local f=$1 sha=$2 event body_attempt footer
   event="$(jq -r '{approve: "COMMENT", comment: "COMMENT", needs_human: "COMMENT", request_changes: "REQUEST_CHANGES"}[.verdict]' "$f")"
+  # GitHub answers 422 to REQUEST_CHANGES on the author's own PR; the factory's PRs are authored by the App.
+  if [ "$(jq -r '.author' "$INPUTS_DIR/pr.json")" = "app/$APP_SLUG" ]; then event=COMMENT; fi
   jq -r --arg marker "$REVIEW_MARKER" '
-    $marker + "\n" + .summary_md
+    $marker + "\n**Verdict:** " + .verdict + "\n\n" + .summary_md
     + (if (.summary_md | test("questions for the human"; "i")) then "" else
         (if (.agent_checks | length) > 0 then "\n\n### Agent checks\n\n| Check | Status | Detail |\n|---|---|---|\n"
            + ([.agent_checks[] | "| \(.name) | \(.status) | \(.detail | gsub("\n"; " ") | gsub("\\|"; "/")) |"] | join("\n")) else "" end)
@@ -357,7 +359,65 @@ apply_review() {
     fi
   else
     log "not mergeable: nothing more to do"
+    if [ "$verdict" = "request_changes" ] \
+      && [ "$author" = "app/$APP_SLUG" ] \
+      && [[ "$(jq -r '.headRefName' "$fresh")" =~ ^(feat|fix)/[0-9]+- ]]; then
+      if jq -e 'any(.labels[]; . == "revise:attempted")' "$fresh" >/dev/null; then
+        log "revise already attempted; handing to a human"
+        edit_labels pr "$PR" "needs-human" ""
+      elif jq -e 'any(.labels[]; . == "revise:requested")' "$fresh" >/dev/null; then
+        log "revise already requested"
+      elif jq -e 'any(.labels[]; . == "needs-human")' "$fresh" >/dev/null; then
+        log "needs-human present; no revise"
+      else
+        edit_labels pr "$PR" "revise:requested" ""
+        log "revise requested"
+      fi
+    fi
   fi
+}
+
+# apply_revise: one bounded fix of a factory PR after a request_changes review; pushes to the PR head.
+apply_revise() {
+  # The one-attempt invariant: every exit of this function leaves revise:requested off, so the tick never
+  # dispatches a second revise. A failure hands the PR to a human; a success only marks the attempt.
+  revise_fail() {
+    if [ -n "$PR" ]; then edit_labels pr "$PR" "revise:attempted,needs-human" "revise:requested" || true; fi
+    die "$@"
+  }
+  local f; f="$(proposal_path revise)"
+  (validate_and_guard revise "$f") || revise_fail "revise proposal rejected"
+  [ -n "$PR" ] || die "revise requires PR"
+  [ -n "$ISSUE" ] || revise_fail "revise requires ISSUE"
+  local head branch cur ahead draft prefix
+  head="$(jq -r '.headRefName' "$INPUTS_DIR/pr.json")"
+  branch="$(jq -r '.branch' "$f")"
+  if ! [[ "$head" =~ ^(feat|fix)/[0-9]+-[a-z0-9-]+$ ]]; then revise_fail "PR head '$head' does not match feat|fix/<N>-<slug>"; fi
+  prefix="${head%%/*}"
+  if { [ "$AGENT" = builder ] && [ "$prefix" != feat ]; } || { [ "$AGENT" = bug-fixer ] && [ "$prefix" != fix ]; }; then
+    revise_fail "branch prefix '$prefix' not allowed for $AGENT"
+  fi
+  if [ "$branch" != "$head" ]; then revise_fail "proposal branch '$branch' is not the PR head '$head'"; fi
+  if [[ "${head#*/}" != "$ISSUE-"* ]]; then revise_fail "branch number must equal issue #$ISSUE"; fi
+  cur="$(git -C "$WORK_DIR" rev-parse --abbrev-ref HEAD)"
+  if [ "$cur" != "$head" ]; then revise_fail "work/ is on '$cur', PR head is '$head'"; fi
+  ahead="$(git -C "$WORK_DIR" rev-list --count "origin/$head..HEAD")"
+  [ "$ahead" -ge 1 ] || revise_fail "revise produced no commits"
+  if [ -n "$(git -C "$WORK_DIR" status --porcelain)" ]; then warn "uncommitted changes in work/ are not pushed"; fi
+  (guard_diff "origin/$head...HEAD") || revise_fail "revise diff rejected by the guard"
+  # Labels first: if this fails nothing has been pushed; if the push fails the PR is already handed over.
+  edit_labels pr "$PR" "revise:attempted" "revise:requested" || die "could not mark the revise attempt; nothing pushed"
+  if ! gh_retry git_auth -C "$WORK_DIR" push origin "HEAD:refs/heads/$head"; then
+    edit_labels pr "$PR" "needs-human" "" || true
+    die "revise push failed"
+  fi
+  if [ "$(jq -r '.checks_passed' "$f")" = "true" ]; then
+    draft="$(gh pr view "$PR" --repo "$TARGET_REPO" --json isDraft --jq .isDraft)"
+    if [ "$draft" = "true" ]; then gh pr ready "$PR" --repo "$TARGET_REPO" >/dev/null; fi
+  fi
+  { printf '<!-- factory:revise -->\n\n'; jq -r '.body' "$f"; printf '\n\n_Factory run %s_\n' "$RUN_ID"; } | sanitize >"$TMP/revise.md"
+  gh pr comment "$PR" --repo "$TARGET_REPO" --body-file "$TMP/revise.md" >/dev/null
+  log "revised PR #$PR on $head"
 }
 
 do_ci_fix() { # <proposal> <fresh pr.json>
@@ -525,6 +585,7 @@ for phase in "${phases[@]}"; do
     builder:research|bug-fixer:research) log "research has no side effects" ;;
     builder:plan|bug-fixer:plan) apply_plan ;;
     builder:implement|bug-fixer:implement) apply_implement ;;
+    builder:revise|bug-fixer:revise) apply_revise ;;
     reviewer:review) apply_review ;;
     verifier:verify) apply_verify ;;
     incident-responder:respond) apply_incident ;;

@@ -32,6 +32,21 @@ def test_fake_model_end_to_end(tmp_path, ws, monkeypatch):
     assert json.loads((out / "proposal.json").read_text())["summary"] == "fake triage"
 
 
+def test_fake_model_revise_phase(tmp_path, ws, monkeypatch):
+    from factory.schemas import BuildProposal
+    out = tmp_path / "out"
+    monkeypatch.setenv("FACTORY_RUN_ID", "r1")
+    i = _inputs(tmp_path)
+    (i / "run.json").write_text(json.dumps({"run_id": "r1", "agent": "builder", "phase": "revise",
+                                            "dry_run": True, "issue_number": 5, "pr_number": 9}))
+    rc = run_mod.main(["--agent", "builder", "--phase", "revise", "--inputs", str(i),
+                       "--out", str(out), "--dry-run", "--fake-model"])
+    res = json.loads((out / "result.json").read_text())
+    assert rc == 0, res
+    assert res["success"] and res["stop_reason"] == "end_turn"
+    BuildProposal.model_validate_json((out / "proposal.json").read_text())
+
+
 def test_guard_denial_recorded(tmp_path, ws, monkeypatch):
     script = [{"tool": "read_file", "input": {"path": "../etc/passwd"}}]
     sp = tmp_path / "s.json"

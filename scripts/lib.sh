@@ -143,6 +143,10 @@ fetch_pr_json() {
     --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | {id, isResolved, path, body: (.comments.nodes[0].body // "")}]' \
     >"$tmp/threads"
   linked="$(jq -r '(.body // "") | capture("(?i)(closes|fixes|resolves) #(?<n>[0-9]+)") | .n' <<<"$raw" 2>/dev/null || true)"
+  { gh api --paginate "repos/$TARGET_REPO/pulls/$n/reviews" 2>/dev/null || echo '[]'; } \
+    | jq -s --arg m "$REVIEW_MARKER" \
+      '[.[][] | select((.body // "") | contains($m))] | sort_by(.submitted_at) | last
+       | if . == null then null else {body, commit_id, submitted_at} end' >"$tmp/factory_review"
   : >"$tmp/plan"
   if [ -n "$linked" ]; then fetch_plan_comment "$linked" >"$tmp/plan" 2>/dev/null || true; fi
   jq "$JQ_NORM"'
@@ -154,8 +158,9 @@ fetch_pr_json() {
                                       conclusion: ((.conclusion // .state // "") | ascii_downcase)}],
      reviews: [.reviews[]? | {author: (.author | normauthor), state}],
      reviewThreads: $threads[0],
-     plan_comment: (if $plan == "" then null else $plan end)}' \
-    --arg assoc "$assoc" --rawfile diff "$tmp/diff" --slurpfile threads "$tmp/threads" --rawfile plan "$tmp/plan" \
+     plan_comment: (if $plan == "" then null else $plan end),
+     factory_review: $freview[0]}' \
+    --slurpfile freview "$tmp/factory_review" --arg assoc "$assoc" --rawfile diff "$tmp/diff" --slurpfile threads "$tmp/threads" --rawfile plan "$tmp/plan" \
     <<<"$raw"
   rm -rf "$tmp"
 }

@@ -145,6 +145,10 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
         for t in pr.get("reviewThreads") or []:
             out.append(untrusted(f"pr #{n} review thread {t.get('id')} on {t.get('path')} "
                                  f"resolved={t.get('isResolved')}", t.get("body", "")))
+        fr = pr.get("factory_review")
+        if fr:
+            out.append(untrusted(f"previous factory review for pr #{n} (commit {str(fr.get('commit_id') or '')[:7]}, "
+                                 f"{fr.get('submitted_at')})", fr.get("body") or ""))
         if pr.get("plan_comment"):
             out.append(untrusted(f"plan comment for pr #{n}", pr["plan_comment"]))
         diff = pr.get("diff") or ""

@@ -7,8 +7,8 @@ System prompts for the factory's Strands agents. The harness (`factory/agents/`)
 | Agent | Prompt file(s) | Phases |
 |---|---|---|
 | triage | `triage/PROMPT.md` | `triage` |
-| builder | `builder/research.md`, `plan.md`, `implement.md` | `research`, `plan`, `implement` |
-| bug-fixer | `bug-fixer/research.md`, `plan.md`, `implement.md` | `research`, `plan`, `implement` |
+| builder | `builder/research.md`, `plan.md`, `implement.md`, `revise.md` | `research`, `plan`, `implement`, `revise` |
+| bug-fixer | `bug-fixer/research.md`, `plan.md`, `implement.md`, `revise.md` | `research`, `plan`, `implement`, `revise` |
 | reviewer | `reviewer/PROMPT.md` (+ `_shared/review-template.md`) | `review` |
 | verifier | `verifier/PROMPT.md` | `verify` |
 | incident-responder | `incident-responder/PROMPT.md` | `respond` |

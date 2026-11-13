@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >>"$STUB_LOG"
 if [ "$1 $2" = "issue view" ]; then printf '%s\\n' "$STUB_LABELS"; exit 0; fi
-if [ "$1 $2" = "issue comment" ]; then
+if [ "$1 $2" = "issue comment" ] || [ "$1 $2" = "pr comment" ]; then
   while [ $# -gt 0 ]; do
     if [ "$1" = "--body-file" ]; then cp "$2" "$STUB_COMMENT"; fi
     shift
@@ -155,3 +155,23 @@ def test_push_failure_is_a_warning_not_a_failure(tmp_path, env):
     assert "::warning::" in p.stderr
     assert not (tmp_path / "out" / "salvage.txt").exists()
     assert "Work saved" not in (tmp_path / "comment.md").read_text()
+
+
+def test_failed_revise_swaps_pr_labels_and_comments_on_the_pr(tmp_path, env):
+    out = tmp_path / "out" / "phases"
+    for d in out.iterdir():
+        (d / "result.json").unlink()
+    phase(tmp_path, "revise", success=False, stop_reason="timeout", error="deadline")
+    (tmp_path / "work" / "b.txt").write_text("half done\n")
+    p, calls = salvage(tmp_path, env, PR="7")
+    assert p.returncode == 0, p.stderr
+    assert backups(tmp_path) == []
+    assert not (tmp_path / "out" / "salvage.txt").exists()
+    assert any("pr edit 7" in c and "--add-label revise:attempted,needs-human" in c
+               and "--remove-label revise:requested" in c for c in calls)
+    assert not any(c.startswith("issue ") for c in calls)
+    assert any(c.startswith("pr comment 7") for c in calls)
+    body = (tmp_path / "comment.md").read_text()
+    assert body.startswith("<!-- factory:failure -->")
+    assert "failed in revise (timeout): deadline." in body
+    assert "No work was pushed to the PR branch." in body
