@@ -104,8 +104,8 @@ def test_spike_model_selection(tmp_path):
     impl = apply_spike_model(cfg, base, ["spike"])
     res_base = resolve_run_spec(cfg, "builder", "research")
     research = apply_spike_model(cfg, res_base, ["spike"])
-    assert research.fallback_model_ids == ("gemini-3.6-flash", "gemini-3-flash-preview")
-    assert impl.fallback_model_ids == ("gemini-3.1-flash-lite",)
+    assert research.fallback_model_ids == ("gemini-3.6-flash", "gemini-3-flash-preview", "gemini-4-hydrogen")
+    assert impl.fallback_model_ids == ("gemini-3.1-flash-lite", "gemini-4-hydrogen")
     assert (base.max_model_calls, impl.max_model_calls) == (60, 15)
     assert research.max_model_calls == min(res_base.max_model_calls, 25)
     low = {**cfg, "models": {**cfg["models"], "spike": {**cfg["models"]["spike"], "max_model_calls": 90}}}
