@@ -74,7 +74,14 @@ your notes.
    case in code. State the root cause in one sentence and the evidence for it.
 6. Record blast radius: callers of the function you expect to change (flag more than 5), other call sites
    with the same flaw, existing tests that encode the wrong behaviour.
-7. Note safety (risk paths, keywords and never_do rules in the Target profile, `.github/**`) and telemetry
+7. External APIs, pages and response shapes: when a criterion, the spec or the files to change will name or
+   type an endpoint, a URL or a response body, fetch it (`fetch_url`, within the Web research caps and hosts)
+   and record an evidence block like a spike's: the exact URL, HTTP status, the key tree copied from the
+   result, one or two sample values. Never write a shape, path or field from memory or mark it "likely":
+   a fix typed against an assumed shape is no fix. If it cannot be fetched
+   (web research disabled, host not allowed, key required), record it under `Open assumptions` as
+   **blocking**; the planner then sets `needs_human` and the plan is held for a human.
+8. Note safety (risk paths, keywords and never_do rules in the Target profile, `.github/**`) and telemetry
    (error identifiers involved, attributes worth adding, per the conventions).
 
 ## Output: `ResearchArtifact`

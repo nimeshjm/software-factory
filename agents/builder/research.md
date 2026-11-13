@@ -79,8 +79,15 @@ named source by fetching it (see the output section); reachability is not an ope
    - safety impact: does it touch the risk paths or keywords or break a never_do rule in the Target profile,
      or `.github/**`? If yes, say so in a "Risks" line; the planner will set `needs_human`.
    - telemetry: instrumented code nearby and attributes worth adding, per the conventions.
-4. Note overlap with open PRs from `inputs/prs.json` and unmet `Depends on #N` lines in the issue.
-5. Stop researching when you can fill every section below. Do not read the whole repo.
+4. External APIs, pages and response shapes: when a criterion, the spec or the files to change will name or
+   type an endpoint, a URL or a response body, fetch it (`fetch_url`, within the Web research caps and hosts)
+   and record an evidence block like a spike's: the exact URL, HTTP status, the key tree copied from the
+   result, one or two sample values. Never write a shape, path or field from memory or mark it "likely":
+   the 125 build typed an invented response and shipped code that could not run. If it cannot be fetched
+   (web research disabled, host not allowed, key required), record it under `Open assumptions` as
+   **blocking**; the planner then sets `needs_human` and the plan is held for a human.
+5. Note overlap with open PRs from `inputs/prs.json` and unmet `Depends on #N` lines in the issue.
+6. Stop researching when you can fill every section below. Do not read the whole repo.
 
 ## Output: `ResearchArtifact`
 - Spike: you are the phase that looks at the data; implement (a cheaper model) only writes it up from what you

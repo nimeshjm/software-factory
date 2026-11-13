@@ -24,7 +24,7 @@ Exit 0 only on success. Always writes `out/result.json`.
 
 ## inputs/*.json
 - `run.json`: `{run_id, agent, phase, dry_run, trigger, target_repo, issue_number|null, pr_number|null, commit_sha}`
-- `issue.json` (when issue_number): `{number, title, body, state, createdAt, author{login}, authorAssociation, labels[string], comments[{author, authorAssociation, body, createdAt}]}`
+- `issue.json` (when issue_number; on a PR-only run such as the reviewer's, the issue the PR body links with `Closes|Fixes|Resolves #N`, so the review can check its acceptance criteria): `{number, title, body, state, createdAt, author{login}, authorAssociation, labels[string], comments[{author, authorAssociation, body, createdAt}]}`
 - `issues.json`: open issues `[{number, title, labels[string], state, authorAssociation, body_excerpt}]`
 - `pr.json` (when pr_number): `{number, title, body, author, authorAssociation, labels[string], headRefName, baseRefName, isDraft, mergeable, files[{path, additions, deletions}], diff (string, ≤200k chars), checks[{name, status, conclusion}], reviews[{author, state}], reviewThreads[{id, isResolved, path, body}], plan_comment (string|null, body of the `<!-- factory:plan -->` comment on the linked issue), factory_review ({body, commit_id, submitted_at}|null: the most recent review on the PR whose body carries `<!-- factory:review -->`, whatever its sha; what the factory last said about the PR, read by `revise` and by the reviewer's own next pass)}`
 - `prs.json`: open PRs `[{number, title, author, labels[string], headRefName, createdAt}]`

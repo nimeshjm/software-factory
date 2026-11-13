@@ -14,6 +14,7 @@ Used by the reviewer agent (fields map to `ReviewProposal`) and rendered by the 
 | conventions | pass | |
 | coverage | fail | src/module.ext:42 new branch has no test |
 | secrets | pass | |
+| acceptance | fail | criterion 2 unmet: no recorded gameweek fixture |
 | plan_drift | pass | |
 | safety | pass | |
 | size | pass | 142 lines, 4 files |

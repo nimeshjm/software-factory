@@ -19,22 +19,25 @@ mkdir -p "$INPUTS_DIR" "$OUT_DIR"
 
 emit_output() { if [ -n "${GITHUB_OUTPUT:-}" ]; then printf '%s=%s\n' "$1" "$2" >>"$GITHUB_OUTPUT"; fi; }
 
+# write_issue_json <number>: inputs/issue.json for one issue (REST, not `gh issue view --json`: the CLI does
+# not expose authorAssociation for issues).
+write_issue_json() {
+  jq -n --slurpfile issue <(gh api "repos/$TARGET_REPO/issues/$1") \
+        --slurpfile comments <(gh api --paginate "repos/$TARGET_REPO/issues/$1/comments" | jq -s 'add // []') \
+    '$issue[0] | {number, title, body: (.body // ""), state: (.state | ascii_upcase), createdAt: .created_at,
+       author: {login: (.user.login // "ghost")}, authorAssociation: .author_association,
+       labels: [.labels[].name],
+       comments: [$comments[0][] | {author: (.user.login // "ghost"), authorAssociation: .author_association,
+                                     body: (.body // ""), createdAt: .created_at}]}' \
+    >"$INPUTS_DIR/issue.json"
+}
+
 mode_json() {
-  local main_sha commit_sha parsed raw
+  local main_sha commit_sha parsed raw linked
   main_sha="$(gh api "repos/$TARGET_REPO/commits/$DEFAULT_BRANCH" --jq .sha)"
   commit_sha="$main_sha"
 
-  if [ -n "$ISSUE" ]; then
-    # REST, not `gh issue view --json`: the CLI does not expose authorAssociation for issues.
-    jq -n --slurpfile issue <(gh api "repos/$TARGET_REPO/issues/$ISSUE") \
-          --slurpfile comments <(gh api --paginate "repos/$TARGET_REPO/issues/$ISSUE/comments" | jq -s 'add // []') \
-      '$issue[0] | {number, title, body: (.body // ""), state: (.state | ascii_upcase), createdAt: .created_at,
-         author: {login: (.user.login // "ghost")}, authorAssociation: .author_association,
-         labels: [.labels[].name],
-         comments: [$comments[0][] | {author: (.user.login // "ghost"), authorAssociation: .author_association,
-                                       body: (.body // ""), createdAt: .created_at}]}' \
-      >"$INPUTS_DIR/issue.json"
-  fi
+  if [ -n "$ISSUE" ]; then write_issue_json "$ISSUE"; fi
 
   # The issues endpoint also returns PRs; drop those. Cap at 200 like the old --limit.
   gh api --paginate "repos/$TARGET_REPO/issues?state=open&per_page=100" | jq -s 'add // []' \
@@ -50,6 +53,11 @@ mode_json() {
 
   if [ -n "$PR" ]; then
     fetch_pr_json "$PR" >"$INPUTS_DIR/pr.json"
+    # A PR-only run (reviewer) still gets the linked issue, so the review can check its acceptance criteria.
+    if [ -z "$ISSUE" ]; then
+      linked="$(jq -r '(.body // "") | capture("(?i)(closes|fixes|resolves) #(?<n>[0-9]+)") | .n' "$INPUTS_DIR/pr.json" 2>/dev/null || true)"
+      if [ -n "$linked" ]; then write_issue_json "$linked" || warn "linked issue #$linked could not be gathered"; fi
+    fi
     raw="$(gh pr view "$PR" --repo "$TARGET_REPO" --json mergeCommit,headRefOid)"
     commit_sha="$(jq -r '.mergeCommit.oid // .headRefOid' <<<"$raw")"
   fi
