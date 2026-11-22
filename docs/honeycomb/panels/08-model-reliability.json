@@ -1,0 +1,43 @@
+{
+  "dataset": "software-factory",
+  "name": "Model reliability",
+  "description": "Model calls (chat spans) against model retries (factory.model_retry events) per model, so a model with many retries per call stands out. Reads chat spans and factory.model_retry span events.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "chat"
+      },
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.model_retry"
+      }
+    ],
+    "filter_combination": "OR",
+    "breakdowns": [
+      "model_d",
+      "name"
+    ],
+    "orders": [
+      {
+        "op": "COUNT",
+        "order": "descending"
+      }
+    ],
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 26,
+    "width": 6,
+    "height": 4
+  }
+}

@@ -30,8 +30,24 @@
   "query_style": "graph",
   "position": {
     "x_coordinate": 0,
-    "y_coordinate": 13,
+    "y_coordinate": 22,
     "width": 12,
     "height": 4
+  },
+  "visualization_settings": {
+    "charts": [
+      {
+        "chart_index": 1,
+        "thresholds": [
+          {
+            "value": 1.0,
+            "color": "red",
+            "operation": "gt",
+            "line_style": "dotted",
+            "label": "reservation used"
+          }
+        ]
+      }
+    ]
   }
 }

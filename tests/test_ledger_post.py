@@ -7,13 +7,16 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "ledger-post.sh"
 
 
-def _run(tmp_path, results, **env):
+def _run(tmp_path, results, proposal=None, **env):
     out = tmp_path / "out"
     for phase, res in results.items():
         d = out / "phases" / phase
         d.mkdir(parents=True)
         (d / "result.json").write_text(json.dumps(res))
     out.mkdir(exist_ok=True)
+    if proposal is not None:
+        (out / "phases" / "review").mkdir(parents=True, exist_ok=True)
+        (out / "phases" / "review" / "proposal.json").write_text(json.dumps(proposal))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     body = tmp_path / "body.json"
@@ -22,7 +25,7 @@ def _run(tmp_path, results, **env):
         '#!/usr/bin/env bash\nwhile [ $# -gt 0 ]; do\n'
         f'  if [ "$1" = "--data" ]; then printf %s "$2" > {body}; fi\n  shift\ndone\n')
     curl.chmod(0o755)
-    e = {k: v for k, v in os.environ.items() if k not in ("PHASES", "PHASE", "DRY_RUN", "DENIED", "JOB_STATUS")}
+    e = {k: v for k, v in os.environ.items() if k not in ("PHASES", "PHASE", "DRY_RUN", "DENIED", "JOB_STATUS", "AGENT")}
     e.update(PATH=f"{bin_dir}:{e['PATH']}", FACTORY_URL="https://f.example", FACTORY_TOKEN="t",
              RUN_ID="r1", OUT_DIR=str(out), **env)
     subprocess.run([str(SCRIPT), "finished"], env=e, check=True, capture_output=True, text=True)
@@ -70,3 +73,21 @@ def test_denied_without_results(tmp_path):
 def test_timeout_without_phase(tmp_path):
     b = _run(tmp_path, {})
     assert (b["status"], b["phase"], b["throttles"], b["dry_run"]) == ("timeout", None, 0, False)
+
+
+def test_reviewer_verdict_from_proposal(tmp_path):
+    b = _run(tmp_path, {"review": _res()}, {"verdict": "request_changes"}, AGENT="reviewer", PHASES="review")
+    assert b["verdict"] == "request_changes"
+
+
+def test_reviewer_without_proposal_has_null_verdict(tmp_path):
+    assert _run(tmp_path, {"review": _res()}, AGENT="reviewer", PHASES="review")["verdict"] is None
+
+
+def test_non_reviewer_verdict_is_null(tmp_path):
+    b = _run(tmp_path, {"review": _res()}, {"verdict": "approve"}, AGENT="builder", PHASES="review")
+    assert b["verdict"] is None
+
+
+def test_denied_verdict_is_null(tmp_path):
+    assert _run(tmp_path, {}, {"verdict": "approve"}, AGENT="reviewer", DENIED="true")["verdict"] is None

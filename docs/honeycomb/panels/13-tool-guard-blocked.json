@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
-  "name": "Guard events",
-  "description": "Events from the harness guards, by guard and rule. Reads span events whose name ends with .event.",
+  "name": "Tool guard denials",
+  "description": "Tool calls the guard blocked, by agent and rule. Reads the tool_guard.blocked span event.",
   "query": {
     "calculations": [
       {
@@ -11,13 +11,13 @@
     "filters": [
       {
         "column": "name",
-        "op": "ends-with",
-        "value": ".event"
+        "op": "=",
+        "value": "tool_guard.blocked"
       }
     ],
     "filter_combination": "AND",
     "breakdowns": [
-      "guard",
+      "factory.agent",
       "rule"
     ],
     "time_range": 604800,
@@ -30,8 +30,8 @@
   },
   "query_style": "table",
   "position": {
-    "x_coordinate": 6,
-    "y_coordinate": 25,
+    "x_coordinate": 0,
+    "y_coordinate": 38,
     "width": 6,
     "height": 4
   }

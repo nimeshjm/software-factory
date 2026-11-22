@@ -39,6 +39,10 @@ case "$EVENT" in
     fi
     dry_run=false
     if [ "${DRY_RUN:-}" = "true" ]; then dry_run=true; fi
+    verdict=""
+    if [ "${AGENT:-}" = "reviewer" ] && [ -f "$OUT_DIR/phases/review/proposal.json" ]; then
+      verdict="$(jq -r 'if (.verdict | type) == "string" then .verdict else "" end' "$OUT_DIR/phases/review/proposal.json" 2>/dev/null || true)"
+    fi
     created_pr=""
     if [ -s "$OUT_DIR/created-pr.txt" ]; then created_pr="$(cat "$OUT_DIR/created-pr.txt")"; fi
     if [ ${#results[@]} -gt 0 ]; then
@@ -58,12 +62,13 @@ case "$EVENT" in
       phase="${bad_phase:-$last_phase}"
       if [ "$phase" = "out" ] || [ "$phase" = "$(basename "$OUT_DIR")" ]; then phase="${PHASE:-}"; fi
       payload="$(jq -n --argjson r "$agg" --arg job "${JOB_STATUS:-}" --arg pr "${PR:-}" --arg issue "${ISSUE:-}" --arg cpr "$created_pr" \
-        --arg phase "$phase" --argjson dry "$dry_run" \
+        --arg phase "$phase" --argjson dry "$dry_run" --arg verdict "$verdict" \
         '{status: (if $r.success and ($job == "success" or $job == "") then "success" else "failed" end),
           stop_reason: $r.stop_reason, model_calls: $r.model_calls, usage: $r.usage,
           phase: (if $phase == "" then null else $phase end),
           error: ($r.chosen.error | if type == "string" then .[:300] else null end),
           throttles: $r.throttles, dry_run: $dry,
+          verdict: (if $verdict == "" then null else $verdict end),
           pr_number: (if $cpr != "" then ($cpr | tonumber) elif $pr != "" then ($pr | tonumber) else null end),
           issue_number: (if $issue == "" then null else ($issue | tonumber) end)}')"
     else
@@ -74,7 +79,7 @@ case "$EVENT" in
         '{status: $s, stop_reason: $r, model_calls: 0, usage: {input_tokens: 0, output_tokens: 0, total_tokens: 0},
           pr_number: (if $pr == "" then null else ($pr | tonumber) end),
           issue_number: (if $issue == "" then null else ($issue | tonumber) end),
-          phase: (if $phase == "" then null else $phase end), error: null, throttles: 0, dry_run: $dry}')"
+          phase: (if $phase == "" then null else $phase end), error: null, throttles: 0, dry_run: $dry, verdict: null}')"
     fi
     post finished "$payload" || true ;;
   *) die "unknown event: $EVENT" ;;

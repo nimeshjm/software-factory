@@ -114,25 +114,31 @@ All wrappers with `dry_run=true`, then `dry_run=false`, then control-plane dispa
 
 ## Honeycomb board
 
-Board link: _to be filled by the owner after the first run of `scripts/honeycomb-board.sh` (it prints `board: <url>` and writes the id to `docs/honeycomb/board.json`)._
+Board link: [factory](https://ui.eu1.honeycomb.io/nimeshjm-personal/environments/software-factory/board/x9-5VWLvd5Ju) (id in `docs/honeycomb/board.json`; re-running `scripts/honeycomb-board.sh` updates it in place and adds panels whose columns have appeared since).
 
-The board answers "are the agents' runs healthy?" from two Honeycomb datasets in the EU environment, last 7 days: `factory` (control-plane events: run panels, panels 01-05, 09, 12) and `software-factory` (the harness's OTLP spans and span events: panels 06-08, 10, 11; the two cannot be joined), with `agent` and `dry_run` as board filters. It is code: `docs/honeycomb/derived_columns.json`, `docs/honeycomb/panels/*.json` (one saved query, annotation and panel each) and `docs/honeycomb/board.json`; the event fields are in `CONTRACTS.md` under "Honeycomb events".
+The board answers "are the agents' runs healthy?" from two Honeycomb datasets in the EU environment, last 7 days: `factory` (control-plane events: panels 01-07, 11 and 15-17) and `software-factory` (the harness's OTLP spans and span events: panels 08-10 and 12-14; the two cannot be joined), with `agent` and `dry_run` as board filters. It is code: `docs/honeycomb/derived_columns.json`, `docs/honeycomb/panels/*.json` (one saved query, annotation and panel each) and `docs/honeycomb/board.json`; the event fields are in `CONTRACTS.md` under "Honeycomb events".
 
 Apply it (owner only, never from Actions): `HONEYCOMB_CONFIG_KEY=<key> scripts/honeycomb-board.sh`, with a Honeycomb configuration key that has "Manage Queries and Columns" and "Manage Public Boards" (keep it out of the repo and out of Actions secrets). It first lists each dataset's columns and skips, with a warning naming the missing columns, every derived column, panel and board filter that needs a column that does not exist yet (Honeycomb only knows a column once an event has carried it). So the first run after a deploy gives a partial board, and `applied N of M panels` says which are missing; re-run later to fill it in (with no applicable panel it leaves the board alone). It then upserts the derived columns by alias, creates fresh queries and annotations, then creates the board (first run: commit the id it writes to `board.json`) or replaces it and deletes the previous annotations. `scripts/honeycomb-board.sh --dry-run` prints every request without a key and without calling the API.
 
 | Panel file | Shows | Reads |
 |---|---|---|
-| `01-run-outcomes` | runs per day by `agent_d`, stacked by `status` | `run.finished`: `agent_d`, `status` |
-| `02-where-runs-die` | table of runs with `status` failed, timeout, lost or denied | `run.finished`: `run_id`, `agent_d`, `subject`, `phase`, `stop_reason`, `error`, `workflow_run_url`, `status` |
-| `03-stop-reasons` | stop reasons by agent | `run.finished`: `agent_d`, `stop_reason` |
-| `04-run-time` | P50/P95 run time, P95 queue time | `run.finished`: `duration_s`, `queue_s` |
-| `05-model-calls-vs-cap` | heatmap of model calls, daily max of calls/reservation | `run.finished`: `model_calls`, `calls_ratio` (derived from `reserved_calls`) |
-| `06-tokens` | input and output tokens per agent, phase, model | model spans: `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `factory.agent`, `factory.phase`, `factory.model_id` |
-| `07-model-switches` | fallbacks by from, to, reason | span event `factory.model_switch`: `factory.model.from`, `.to`, `.reason` |
-| `08-model-retries` | throttles, stalls, 5xx per day | span event `factory.model_retry`: `factory.agent`, `factory.retry.reason`, `factory.model_id` |
-| `09-throttles` | throttles per agent | `run.finished`: `throttles` |
-| `10-tool-guard-blocked` | denied tool calls | span event `tool_guard.blocked`: `factory.agent`, `rule` |
-| `11-guard-events` | other guard events | span events named `*.event`: `guard`, `rule` |
-| `12-lost-runs` | runs marked lost by the tick | `run.finished` with `status = lost`: `agent_d` |
+| `00-runbook` | text: what to do when a panel is red, with the commands | nothing |
+| `01-success-rate` | AVG `run_ok` by `agent_d`, red line below 80% | `run.finished`: `agent_d`, `run_ok` (derived from `status`) |
+| `02-retry-loops` | subjects with more than one failed, timeout or lost run in 24 h | `run.finished`: `subject`, `agent_d`, `status` |
+| `03-run-outcomes` | runs per day by `agent_d`, stacked by `status` | `run.finished`: `agent_d`, `status` |
+| `04-where-runs-die` | table of failed, timeout, lost or denied runs with the stop reason, error and workflow link | `run.finished`: `run_id`, `agent_d`, `subject`, `phase`, `stop_reason`, `error`, `workflow_run_url`, `status` |
+| `05-quota-burn` | daily `model_calls` by `status`, red line at the daily quota of 400 | `run.finished`: `model_calls`, `status` |
+| `06-run-time` | P50/P95 run time, P95 queue time | `run.finished`: `duration_s`, `queue_s` |
+| `07-model-calls-vs-cap` | heatmap of model calls, daily max of calls/reservation, red line at 1.0 | `run.finished`: `model_calls`, `calls_ratio` (derived from `reserved_calls`) |
+| `08-model-reliability` | `chat` spans against `factory.model_retry` events per model | `software-factory`: `name`, `model_d` (derived from `gen_ai.request.model`, `factory.model_id`) |
+| `09-model-switches` | fallbacks by from, to, reason | span event `factory.model_switch`: `factory.model.from`, `.to`, `.reason` |
+| `10-model-retries` | throttles, stalls, 5xx per day | span event `factory.model_retry`: `factory.agent`, `factory.retry.reason`, `factory.model_id` |
+| `11-throttles` | throttles per agent | `run.finished`: `throttles` |
+| `12-tokens` | input and output tokens per agent, phase, model | model spans: `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `factory.agent`, `factory.phase`, `factory.model_id` |
+| `13-tool-guard-blocked` | denied tool calls | span event `tool_guard.blocked`: `factory.agent`, `rule` |
+| `14-guard-events` | other guard events | span events named `*.event`: `guard`, `rule` |
+| `15-pr-acceptance` | factory PRs closed in 30 days: merge rate and first-pass rate per agent | `pr.closed`: `agent`, `outcome` (derived `pr_merged`, `pr_first_pass`) |
+| `16-pr-outcomes` | PRs by outcome, autonomy label and agent | `pr.closed`: `outcome`, `autonomy`, `agent` |
+| `17-review-verdicts` | the reviewer's verdicts per day | `run.finished`: `agent_d`, `verdict` |
 
-`agent_d` is a derived column on `factory`: `agent`, else parsed from `run_id` (so events from before the `agent` field exist still group by agent).
+Derived columns: `agent_d` on `factory` is `agent`, else parsed from `run_id`; `run_ok` on `factory` is 1 for a successful run; `pr_merged` and `pr_first_pass` on `factory` are 1/0 per `pr.closed` event (merged; merged without a revise round); `model_d` on `software-factory` is the model an event is about. The `agent_d` parse of `run_id` means events from before the `agent` field existed still group by agent.

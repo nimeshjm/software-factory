@@ -41,8 +41,10 @@ export interface FinishedBody {
   error?: string | null;
   throttles?: number | null;
   dry_run?: boolean | null;
+  verdict?: string | null;
 }
 
+const VERDICTS = new Set(["approve", "request_changes", "comment", "needs_human"]);
 const intOrNull = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : null);
 const secondsBetween = (from: string | null, to: Date | string | null): number | null => {
   if (!from || !to) return null;
@@ -91,6 +93,7 @@ export function finishedEvent(row: RunRow, body: FinishedBody, now: Date): Recor
     pr_number: row.pr_number ?? null,
     workflow_run_url: row.workflow_run_url ?? null,
     dry_run: typeof body.dry_run === "boolean" ? body.dry_run : null,
+    verdict: typeof body.verdict === "string" && VERDICTS.has(body.verdict) ? body.verdict : null,
   };
 }
 

@@ -25,6 +25,34 @@ export function isDroppedSender(event: string, payload: any): boolean {
   return String(payload?.sender?.login ?? "").endsWith("[bot]");
 }
 
+/** Pure: the `pr.closed` Honeycomb event for a closed factory PR (bot author, `feat|fix/<n>-` head), else null. */
+export function prClosedEvent(payload: any): Record<string, unknown> | null {
+  const pr = payload?.pull_request;
+  if (!pr) return null;
+  const author = String(pr.user?.login ?? "");
+  const m = /^(feat|fix)\/(\d+)-/.exec(String(pr.head?.ref ?? ""));
+  if (!author.endsWith("[bot]") || !m) return null;
+  const labels = new Set<string>((pr.labels ?? []).map((l: any) => String(l?.name ?? "")));
+  const autonomy = labels.has("autonomy:lit") ? "lit" : labels.has("autonomy:dark") ? "dark" : null;
+  const merged = pr.merged === true;
+  const revised = labels.has("revise:attempted");
+  const open = (Date.parse(pr.closed_at) - Date.parse(pr.created_at)) / 1000;
+  return {
+    name: "pr.closed",
+    pr_number: typeof pr.number === "number" ? pr.number : null,
+    issue_number: Number(m[2]),
+    agent: m[1] === "feat" ? "builder" : "bug-fixer",
+    merged,
+    outcome: merged ? (revised ? "merged_after_revise" : "merged_first_pass") : "closed_unmerged",
+    revised,
+    needs_human: labels.has("needs-human"),
+    autonomy,
+    author,
+    merged_by: pr.merged_by?.login ?? null,
+    open_s: Number.isFinite(open) ? Math.max(0, Math.floor(open)) : null,
+  };
+}
+
 export interface Intent {
   agent: string;
   subject: string;
@@ -111,6 +139,10 @@ export async function handleWebhook(req: Request, env: Env, ctx: ExecutionContex
     .run();
   if (!ins.meta.changes) return json({ duplicate: true });
   if (event === "ping") return json({ pong: true });
+  if (event === "pull_request" && payload.action === "closed" && String(payload.repository?.full_name ?? "").toLowerCase() === env.TARGET_REPO.toLowerCase()) {
+    const ev = prClosedEvent(payload);
+    if (ev) void sendEvent(env, ev, ctx);
+  }
   if (isDroppedSender(event, payload)) return json({ ignored: "bot sender" });
 
   const intents = mapEvent(event, payload, env.TARGET_REPO, {

@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
-  "name": "Tool guard denials",
-  "description": "Tool calls the guard blocked, by agent and rule. Reads the tool_guard.blocked span event.",
+  "name": "Model switches",
+  "description": "Fallbacks to another model, by from, to and reason (daily_quota or unresponsive:<detail>). Reads the factory.model_switch span event.",
   "query": {
     "calculations": [
       {
@@ -12,13 +12,14 @@
       {
         "column": "name",
         "op": "=",
-        "value": "tool_guard.blocked"
+        "value": "factory.model_switch"
       }
     ],
     "filter_combination": "AND",
     "breakdowns": [
-      "factory.agent",
-      "rule"
+      "factory.model.from",
+      "factory.model.to",
+      "factory.model.reason"
     ],
     "time_range": 604800,
     "orders": [
@@ -30,8 +31,8 @@
   },
   "query_style": "table",
   "position": {
-    "x_coordinate": 0,
-    "y_coordinate": 25,
+    "x_coordinate": 6,
+    "y_coordinate": 26,
     "width": 6,
     "height": 4
   }

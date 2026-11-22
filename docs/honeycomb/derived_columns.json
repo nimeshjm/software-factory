@@ -10,5 +10,29 @@
     "alias": "calls_ratio",
     "expression": "DIV($model_calls, $reserved_calls)",
     "description": "model_calls / reserved_calls on run.finished: 1.0 means the run used its whole reservation."
+  },
+  {
+    "dataset": "factory",
+    "alias": "run_ok",
+    "expression": "IF(EQUALS($status, \"success\"), 1, 0)",
+    "description": "1 for a successful run.finished, else 0: AVG(run_ok) is the success rate."
+  },
+  {
+    "dataset": "software-factory",
+    "alias": "model_d",
+    "expression": "IF(EQUALS($name, \"factory.model_retry\"), $factory.model_id, $gen_ai.request.model)",
+    "description": "The model an event is about: the failing model for factory.model_retry, else the chat span's gen_ai.request.model (factory.model_id on spans is the run's primary model and wrong after a switch)."
+  },
+  {
+    "dataset": "factory",
+    "alias": "pr_merged",
+    "expression": "IF(EQUALS($outcome, \"closed_unmerged\"), 0, 1)",
+    "description": "1 when the factory PR was merged, 0 when closed unmerged: AVG over pr.closed is the completion rate."
+  },
+  {
+    "dataset": "factory",
+    "alias": "pr_first_pass",
+    "expression": "IF(EQUALS($outcome, \"merged_first_pass\"), 1, 0)",
+    "description": "1 when the factory PR was merged without a revise round: AVG over pr.closed is the accepted-without-revision rate."
   }
 ]

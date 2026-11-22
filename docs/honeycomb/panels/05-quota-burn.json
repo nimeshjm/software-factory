@@ -1,0 +1,51 @@
+{
+  "dataset": "factory",
+  "name": "Quota burn",
+  "description": "Model calls reported by finished runs per day, stacked by status; the red line is the daily quota of 400. Reads run.finished.",
+  "query": {
+    "calculations": [
+      {
+        "op": "SUM",
+        "column": "model_calls"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "status"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "visualization_settings": {
+    "utc_xaxis": true,
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stacked",
+        "thresholds": [
+          {
+            "value": 400,
+            "color": "red",
+            "operation": "gt",
+            "line_style": "solid",
+            "label": "daily quota 400"
+          }
+        ]
+      }
+    ]
+  },
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 18,
+    "width": 6,
+    "height": 4
+  }
+}

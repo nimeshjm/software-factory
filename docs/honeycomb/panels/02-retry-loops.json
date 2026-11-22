@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
-  "name": "Where runs die",
-  "description": "Every run that did not succeed, with the phase, stop reason, error and a link to the workflow run. Reads run.finished with status in failed, timeout, lost, denied.",
+  "name": "Retry loops",
+  "description": "Subjects with more than one failed, timeout or lost run in the last 24 hours, per agent: the issue keeps failing. Reads run.finished.",
   "query": {
     "calculations": [
       {
@@ -20,35 +20,35 @@
         "value": [
           "failed",
           "timeout",
-          "lost",
-          "denied"
+          "lost"
         ]
       }
     ],
     "filter_combination": "AND",
     "breakdowns": [
-      "run_id",
-      "agent_d",
       "subject",
-      "phase",
-      "stop_reason",
-      "error",
-      "workflow_run_url"
+      "agent_d"
     ],
-    "time_range": 604800,
+    "havings": [
+      {
+        "calculate_op": "COUNT",
+        "op": ">",
+        "value": 1
+      }
+    ],
     "orders": [
       {
         "op": "COUNT",
         "order": "descending"
       }
     ],
-    "limit": 200
+    "time_range": 86400
   },
   "query_style": "table",
   "position": {
-    "x_coordinate": 0,
-    "y_coordinate": 4,
-    "width": 12,
-    "height": 5
+    "x_coordinate": 4,
+    "y_coordinate": 5,
+    "width": 8,
+    "height": 4
   }
 }

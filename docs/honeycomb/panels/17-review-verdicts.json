@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
-  "name": "Lost runs",
-  "description": "Runs the tick marked lost because no finished report arrived, per agent. Reads run.finished with status lost.",
+  "name": "Review verdicts",
+  "description": "The reviewer's verdicts per day (approve, request_changes, ...). Reads run.finished with agent_d = reviewer.",
   "query": {
     "calculations": [
       {
@@ -15,23 +15,32 @@
         "value": "run.finished"
       },
       {
-        "column": "status",
+        "column": "agent_d",
         "op": "=",
-        "value": "lost"
+        "value": "reviewer"
       }
     ],
     "filter_combination": "AND",
     "breakdowns": [
-      "agent_d"
+      "verdict"
     ],
     "time_range": 604800,
     "granularity": 86400
   },
   "query_style": "graph",
+  "visualization_settings": {
+    "utc_xaxis": true,
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stacked"
+      }
+    ]
+  },
   "position": {
     "x_coordinate": 0,
-    "y_coordinate": 29,
+    "y_coordinate": 46,
     "width": 12,
-    "height": 3
+    "height": 4
   }
 }

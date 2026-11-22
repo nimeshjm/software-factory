@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { DEBOUNCE_MS, SECURITY_DEBOUNCE_MS, debounceWindowMs, hmacHex, isDebounced, isDroppedSender, mapEvent, verifySignature } from "../src/webhooks";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEBOUNCE_MS, SECURITY_DEBOUNCE_MS, debounceWindowMs, hmacHex, isDebounced, isDroppedSender, handleWebhook, mapEvent, prClosedEvent, verifySignature } from "../src/webhooks";
 
 const T = "acme/widgets";
 const DEPLOY = { workflowName: "Ship it", branch: "trunk" };
@@ -106,5 +106,68 @@ describe("webhooks", () => {
     expect(isDebounced([{ status: "success", finished_at: "2026-10-21T09:30:00Z" }], now, w)).toBe(true);
     expect(isDebounced([{ status: "success", finished_at: "2026-10-21T08:59:00Z" }], now, w)).toBe(false);
     expect(isDebounced([{ status: "success", finished_at: "2026-10-21T09:30:00Z" }], now)).toBe(false);
+  });
+});
+
+describe("prClosedEvent", () => {
+  const pr = (o: Record<string, unknown> = {}, labels: string[] = []) => ({
+    action: "closed",
+    pull_request: {
+      number: 5, user: { login: "factory-app[bot]" }, head: { ref: "feat/12-add-x" }, merged: true, merged_by: { login: "alice" },
+      created_at: "2026-11-20T10:00:00Z", closed_at: "2026-11-20T11:01:05Z", labels: labels.map((name) => ({ name })), ...o,
+    },
+  });
+  it("merged first pass on a dark PR", () => {
+    expect(prClosedEvent(pr({}, ["autonomy:dark"]))).toEqual({
+      name: "pr.closed", pr_number: 5, issue_number: 12, agent: "builder", merged: true, outcome: "merged_first_pass", revised: false,
+      needs_human: false, autonomy: "dark", author: "factory-app[bot]", merged_by: "alice", open_s: 3665,
+    });
+  });
+  it("merged after revise", () => {
+    expect(prClosedEvent(pr({}, ["revise:attempted", "autonomy:lit"]))).toMatchObject({ outcome: "merged_after_revise", revised: true, autonomy: "lit" });
+  });
+  it("closed unmerged with needs-human", () => {
+    expect(prClosedEvent(pr({ merged: false, merged_by: null }, ["needs-human"]))).toMatchObject({
+      merged: false, outcome: "closed_unmerged", needs_human: true, autonomy: null, merged_by: null,
+    });
+  });
+  it("maps fix/ to bug-fixer", () => {
+    expect(prClosedEvent(pr({ head: { ref: "fix/3-bug" } }))).toMatchObject({ agent: "bug-fixer", issue_number: 3 });
+  });
+  it("returns null for dependabot and human PRs", () => {
+    expect(prClosedEvent(pr({ user: { login: "dependabot[bot]" }, head: { ref: "dependabot/npm_and_yarn/x" } }))).toBeNull();
+    expect(prClosedEvent(pr({ user: { login: "alice" } }))).toBeNull();
+  });
+});
+
+describe("handleWebhook pr.closed", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const deliver = async (repo: string) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const env = {
+      GITHUB_WEBHOOK_SECRET: "s", HONEYCOMB_API_KEY: "k", TARGET_REPO: "o/r", DEPLOY_WORKFLOW_NAME: "d", TARGET_DEFAULT_BRANCH: "main",
+      DB: { prepare: () => ({ bind: () => ({ run: async () => ({ meta: { changes: 1 } }) }) }) },
+    } as never;
+    const body = JSON.stringify({
+      action: "closed", repository: { full_name: repo }, sender: { login: "factory-app[bot]" },
+      pull_request: { number: 5, user: { login: "factory-app[bot]" }, head: { ref: "fix/3-x" }, merged: true, created_at: "2026-11-20T10:00:00Z", closed_at: "2026-11-20T10:00:10Z", labels: [] },
+    });
+    const req = new Request("https://x/webhook", {
+      method: "POST", body,
+      headers: { "x-github-event": "pull_request", "x-github-delivery": "d1", "x-hub-signature-256": `sha256=${await hmacHex("s", body)}` },
+    });
+    const res = await handleWebhook(req, env, { waitUntil() {} } as never);
+    expect(await res.json()).toEqual({ ignored: "bot sender" });
+    return fetchMock;
+  };
+  it("emits the event for a bot-sender closed delivery and dispatches nothing", async () => {
+    const fetchMock = await deliver("O/R");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ name: "pr.closed", agent: "bug-fixer", outcome: "merged_first_pass" });
+  });
+  it("emits nothing for a factory-shaped PR from another repository", async () => {
+    const fetchMock = await deliver("other/repo");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

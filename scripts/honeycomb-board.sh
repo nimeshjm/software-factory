@@ -42,21 +42,20 @@ hc() {
   esac
 }
 
-# Column check: list each dataset's columns once; skip what references a column that does not exist yet.
-# --dry-run makes no request, so every column counts as present.
-DATASETS="$( { echo factory; jq -r '.[].dataset' "$DIR/derived_columns.json"; jq -r '.dataset' "$DIR"/panels/*.json; } | sort -u)"
+# Validation first, no writes: columns and derived columns per dataset, the board (by id, or by name).
+# --dry-run makes no request, so every column counts as present and every list as empty.
+DATASETS="$( { echo factory; jq -r '.[].dataset' "$DIR/derived_columns.json"; jq -r '.dataset // empty' "$DIR"/panels/*.json; } | sort -u)"
+# list_of PATH: the response array, or [] on 404 and in --dry-run.
+list_of() {
+  local resp rc=0
+  if [ "$DRY" = true ]; then hc GET "$1" >/dev/null; echo '[]'; return 0; fi
+  resp="$(ALLOW_404=1 hc GET "$1")" || rc=$?
+  if [ "$rc" -eq 0 ]; then printf '%s\n' "$resp"; elif [ "$rc" -eq 44 ]; then echo '[]'; else return "$rc"; fi
+}
 for ds in $DATASETS; do
-  cols='[]'
-  if [ "$DRY" = true ]; then
-    hc GET "/1/columns/$ds" >/dev/null
-  else
-    rc=0
-    resp="$(ALLOW_404=1 hc GET "/1/columns/$ds")" || rc=$?
-    if [ "$rc" -eq 0 ]; then cols="$(jq -c '[.[].key_name]' <<<"$resp")"
-    elif [ "$rc" -ne 44 ]; then exit "$rc"
-    fi
-  fi
-  printf -v "COLS_${ds//-/_}" '%s' "$cols"
+  v="${ds//-/_}"
+  printf -v "COLS_$v" '%s' "$(list_of "/1/columns/$ds" | jq -c '[.[].key_name]')"
+  printf -v "DERIVED_$v" '%s' "$(list_of "/1/derived_columns/$ds" | jq -c '.')"
 done
 # missing DATASET REFS_JSON: prints the refs that are neither a column of the dataset nor an alias applied this run.
 APPLIED='[]' # ["dataset:alias", ...]
@@ -68,13 +67,19 @@ missing() {
 }
 SKIPPED=()
 
-# Derived columns: upsert by alias.
+# Derived columns: decide skip, conflict, unchanged, update or create (writes come later).
+DC_ENTRIES=() DC_IDS=() DC_ACTIONS=()
 n="$(jq 'length' "$DIR/derived_columns.json")"
 for ((i = 0; i < n; i++)); do
   entry="$(jq -c ".[$i]" "$DIR/derived_columns.json")"
   ds="$(jq -r '.dataset' <<<"$entry")"
   col="$(jq -c 'del(.dataset)' <<<"$entry")"
   alias="$(jq -r '.alias' <<<"$col")"
+  v="${ds//-/_}"; colsvar="COLS_$v"; dervar="DERIVED_$v"
+  existing="$(jq -c --arg a "$alias" 'map(select(.alias == $a)) | first // empty' <<<"${!dervar}")"
+  if [ -z "$existing" ] && [ "$(jq --arg a "$alias" 'index($a) != null' <<<"${!colsvar}")" = "true" ]; then
+    die "derived column alias $alias ($ds) is the name of a real column; rename it in derived_columns.json (and the panels that use it)"
+  fi
   refs="$(jq -c '[.expression | match("\\$(?:\"([^\"]+)\"|([A-Za-z0-9_.]+))"; "g") | (.captures[0].string // .captures[1].string)] | unique' <<<"$col")"
   miss="$(missing "$ds" "$refs" | paste -sd, -)"
   if [ -n "$miss" ]; then
@@ -83,31 +88,67 @@ for ((i = 0; i < n; i++)); do
     continue
   fi
   APPLIED="$(jq -c --arg a "$ds:$alias" '. + [$a]' <<<"$APPLIED")"
-  rc=0
-  existing="$(ALLOW_404=1 hc GET "/1/derived_columns/$ds?alias=$alias")" || rc=$?
-  if [ "$DRY" = true ]; then rc=44; fi
-  if [ "$rc" -eq 44 ]; then
-    hc POST "/1/derived_columns/$ds" "$col" >/dev/null
-  elif [ "$rc" -ne 0 ]; then
-    exit "$rc"
-  elif [ "$(jq -n --argjson a "$col" --argjson b "$existing" '($a.expression == $b.expression) and (($a.description // "") == ($b.description // ""))')" = "true" ]; then
-    log "derived column $alias unchanged"
-  else
-    hc PUT "/1/derived_columns/$ds/$(jq -r '.id' <<<"$existing")" "$col" >/dev/null
+  action=create
+  if [ -n "$existing" ]; then
+    if [ "$(jq -n --argjson a "$col" --argjson b "$existing" '($a.expression == $b.expression) and (($a.description // "") == ($b.description // ""))')" = "true" ]; then
+      action=unchanged
+    else
+      action=update
+    fi
   fi
+  eid=""
+  if [ -n "$existing" ]; then eid="$(jq -r '.id' <<<"$existing")"; fi
+  DC_ENTRIES+=("$entry"); DC_IDS+=("$eid"); DC_ACTIONS+=("$action")
+done
+
+# Board: by id (must exist) or by name (at most one).
+board_id="$(jq -r '.id // empty' "$DIR/board.json")"
+board_name="$(jq -r '.name' "$DIR/board.json")"
+if [ -n "$board_id" ]; then
+  rc=0
+  ALLOW_404=1 hc GET "/1/boards/$board_id" >/dev/null || rc=$?
+  if [ "$rc" -eq 44 ]; then die "board $board_id not found; set id to null in board.json to create it"; fi
+  if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+else
+  found="$(list_of /1/boards | jq -c --arg n "$board_name" '[.[] | select(.name == $n) | .id]')"
+  case "$(jq 'length' <<<"$found")" in
+    0) ;;
+    1) board_id="$(jq -r '.[0]' <<<"$found")"; log "reusing existing board $board_id named $board_name" ;;
+    *) die "several boards are named $board_name ($(jq -r 'join(", ")' <<<"$found")); delete the extras or set id in board.json" ;;
+  esac
+fi
+
+# Derived columns: writes.
+for i in "${!DC_ENTRIES[@]}"; do
+  ds="$(jq -r '.dataset' <<<"${DC_ENTRIES[$i]}")"
+  col="$(jq -c 'del(.dataset)' <<<"${DC_ENTRIES[$i]}")"
+  case "${DC_ACTIONS[$i]}" in
+    create) hc POST "/1/derived_columns/$ds" "$col" >/dev/null ;;
+    update) hc PUT "/1/derived_columns/$ds/${DC_IDS[$i]}" "$col" >/dev/null ;;
+    *) log "derived column $(jq -r '.alias' <<<"$col") unchanged" ;;
+  esac
 done
 
 # Queries and annotations: always fresh (queries are immutable), one per applicable panel.
 panels='[]'
 new_annotations='[]'
+panel_names='[]'
+query_datasets=""
 total=0
 applied=0
 for f in "$DIR"/panels/*.json; do
-  total=$((total + 1))
   base="$(basename "$f" .json)"
   panel="$(jq -c . "$f")"
+  if [ "$(jq -r '.type // "query"' <<<"$panel")" = "text" ]; then
+    # Text panels are always on the board: no dataset, query, annotation or column check.
+    panels="$(jq -c --argjson p "$panel" '. + [{type: "text", text_panel: {content: $p.content}, position: $p.position}]' <<<"$panels")"
+    continue
+  fi
+  total=$((total + 1))
   ds="$(jq -r '.dataset' <<<"$panel")"
-  refs="$(jq -c '[.query | (.calculations[]?.column?, .filters[]?.column?, .breakdowns[]?, .orders[]?.column?) | select(. != null)] | unique' <<<"$panel")"
+  panel_names="$(jq -c --argjson p "$panel" '. + [$p.name]' <<<"$panel_names")"
+  query_datasets="$(printf '%s\n%s\n' "$query_datasets" "$ds" | sort -u | sed '/^$/d')"
+  refs="$(jq -c '[.query | (.calculations[]?.column?, .filters[]?.column?, .breakdowns[]?, .orders[]?.column?, .havings[]?.column?) | select(. != null)] | unique' <<<"$panel")"
   miss="$(missing "$ds" "$refs" | paste -sd, -)"
   if [ -n "$miss" ]; then
     warn "skipping panel $base ($ds): missing columns $miss"
@@ -143,26 +184,26 @@ if [ -n "$miss_presets" ]; then
   presets="$(jq -c --arg m "$miss_presets" '($m | split(",")) as $x | map(select(.column as $c | $x | index($c) | not))' <<<"$presets")"
 fi
 
-# Board: create when board.json has no id, else replace and drop the old panels' annotations.
-board_id="$(jq -r '.id // empty' "$DIR/board.json")"
+# Board: PUT when it exists (by id or by name), else create; write a new or found id back.
 body="$(jq -c --argjson panels "$panels" --argjson presets "$presets" \
   '{name, description, type, layout_generation, preset_filters: $presets, panels: $panels}' "$DIR/board.json")"
 if [ -z "$board_id" ]; then
   resp="$(hc POST /1/boards "$body")"
-  if [ "$DRY" != true ]; then
-    board_id="$(jq -er '.id' <<<"$resp")"
-    tmp="$(mktemp)"
-    jq --arg id "$board_id" '.id = $id' "$DIR/board.json" >"$tmp" && mv "$tmp" "$DIR/board.json"
-    log "board id $board_id written to $DIR/board.json"
-  fi
+  if [ "$DRY" != true ]; then board_id="$(jq -er '.id' <<<"$resp")"; fi
 else
-  old="$(hc GET "/1/boards/$board_id")"
-  if [ "$DRY" = true ]; then old='{"panels": []}'; fi
   resp="$(hc PUT "/1/boards/$board_id" "$(jq -c --arg id "$board_id" '. + {id: $id}' <<<"$body")")"
-  while read -r ads aid; do
-    hc DELETE "/1/query_annotations/$ads/$aid" >/dev/null
-  done < <(jq -r --argjson new "$new_annotations" \
-    '[.panels[]?.query_panel | select(.query_annotation_id != null) | {ds: (.dataset // "factory"), id: .query_annotation_id}]
-     | unique | .[] | select(.id as $x | $new | index($x) | not) | "\(.ds) \(.id)"' <<<"$old")
 fi
+if [ "$DRY" != true ] && [ "$board_id" != "$(jq -r '.id // empty' "$DIR/board.json")" ]; then
+  tmp="$(mktemp)"
+  jq --arg id "$board_id" '.id = $id' "$DIR/board.json" >"$tmp" && mv "$tmp" "$DIR/board.json"
+  log "board id $board_id written to $DIR/board.json"
+fi
+
+# Annotation cleanup: ours (by panel name) and not on the board just written.
+for ds in $query_datasets; do
+  while IFS= read -r aid; do
+    hc DELETE "/1/query_annotations/$ds/$aid" >/dev/null
+  done < <(list_of "/1/query_annotations/$ds" | jq -r --argjson names "$panel_names" --argjson new "$new_annotations" \
+    '.[] | select((.name as $n | $names | index($n)) and (.id as $i | $new | index($i) | not)) | .id')
+done
 if [ "$DRY" != true ]; then jq -r '"board: " + (.links.board_url // "<no board_url in response>")' <<<"$resp"; else log "dry run: no requests made"; fi

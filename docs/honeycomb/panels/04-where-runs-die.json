@@ -1,0 +1,54 @@
+{
+  "dataset": "factory",
+  "name": "Where runs die",
+  "description": "Every run that did not succeed, with the phase, stop reason, error and a link to the workflow run. Reads run.finished with status in failed, timeout, lost, denied.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      },
+      {
+        "column": "status",
+        "op": "in",
+        "value": [
+          "failed",
+          "timeout",
+          "lost",
+          "denied"
+        ]
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "run_id",
+      "agent_d",
+      "subject",
+      "phase",
+      "stop_reason",
+      "error",
+      "workflow_run_url"
+    ],
+    "time_range": 604800,
+    "orders": [
+      {
+        "op": "COUNT",
+        "order": "descending"
+      }
+    ],
+    "limit": 200
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 13,
+    "width": 12,
+    "height": 5
+  }
+}

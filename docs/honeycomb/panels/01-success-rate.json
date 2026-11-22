@@ -1,0 +1,49 @@
+{
+  "dataset": "factory",
+  "name": "Success rate",
+  "description": "Share of finished runs that succeeded, per agent (AVG of the run_ok derived column over run.finished). The red line is 80%. Reads run.finished.",
+  "query": {
+    "calculations": [
+      {
+        "op": "AVG",
+        "column": "run_ok"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d"
+    ],
+    "time_range": 604800
+  },
+  "query_style": "graph",
+  "visualization_settings": {
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stat",
+        "thresholds": [
+          {
+            "value": 0.8,
+            "color": "red",
+            "operation": "lt",
+            "line_style": "dotted",
+            "label": "below 80%"
+          }
+        ]
+      }
+    ]
+  },
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 5,
+    "width": 4,
+    "height": 4
+  }
+}

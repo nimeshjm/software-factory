@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
-  "name": "Model switches",
-  "description": "Fallbacks to another model, by from, to and reason (daily_quota or unresponsive:<detail>). Reads the factory.model_switch span event.",
+  "name": "Guard events",
+  "description": "Events from the harness guards, by guard and rule. Reads span events whose name ends with .event.",
   "query": {
     "calculations": [
       {
@@ -11,15 +11,14 @@
     "filters": [
       {
         "column": "name",
-        "op": "=",
-        "value": "factory.model_switch"
+        "op": "ends-with",
+        "value": ".event"
       }
     ],
     "filter_combination": "AND",
     "breakdowns": [
-      "factory.model.from",
-      "factory.model.to",
-      "factory.model.reason"
+      "guard",
+      "rule"
     ],
     "time_range": 604800,
     "orders": [
@@ -31,9 +30,9 @@
   },
   "query_style": "table",
   "position": {
-    "x_coordinate": 0,
-    "y_coordinate": 21,
-    "width": 4,
+    "x_coordinate": 6,
+    "y_coordinate": 38,
+    "width": 6,
     "height": 4
   }
 }

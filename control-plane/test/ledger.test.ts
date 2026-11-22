@@ -58,14 +58,14 @@ describe("finishedEvent", () => {
       name: "run.finished", run_id: "builder-202610210100", agent: "builder", subject: "issue:1", trigger: "cron",
       status: "failed", stop_reason: "exception", phase: "implement", error: "boom", model_calls: 12, reserved_calls: 100,
       throttles: 3, "usage.input_tokens": 100, "usage.output_tokens": 20, "usage.total_tokens": 120,
-      duration_s: 555, queue_s: 45, issue_number: 7, pr_number: 9, workflow_run_url: "https://example/run/1", dry_run: false,
+      duration_s: 555, queue_s: 45, issue_number: 7, pr_number: 9, workflow_run_url: "https://example/run/1", dry_run: false, verdict: null,
     });
   });
   it("gives null durations for a run that never started and nulls for absent fields", () => {
     const e = finishedEvent(run({ id: "x" }), { status: "timeout" }, at);
     expect(e.duration_s).toBeNull();
     expect(e.queue_s).toBeNull();
-    for (const k of ["stop_reason", "phase", "error", "throttles", "usage.input_tokens", "usage.output_tokens", "usage.total_tokens", "dry_run", "trigger", "workflow_run_url"]) {
+    for (const k of ["stop_reason", "phase", "error", "throttles", "usage.input_tokens", "usage.output_tokens", "usage.total_tokens", "dry_run", "verdict", "trigger", "workflow_run_url"]) {
       expect(e).toHaveProperty(k, null);
     }
   });
@@ -75,6 +75,11 @@ describe("finishedEvent", () => {
   it("prefers body.phase over row.phase", () => {
     expect(finishedEvent(started, { status: "failed", phase: "plan" }, at).phase).toBe("plan");
     expect(finishedEvent(started, { status: "failed" }, at).phase).toBe("implement");
+  });
+  it("keeps only known verdicts", () => {
+    expect(finishedEvent(started, { status: "success", verdict: "request_changes" }, at).verdict).toBe("request_changes");
+    expect(finishedEvent(started, { status: "success", verdict: "maybe" }, at).verdict).toBeNull();
+    expect(finishedEvent(started, { status: "success" }, at).verdict).toBeNull();
   });
   it("has the lost shape", () => {
     const e = finishedEvent(started, { status: "lost", stop_reason: "timeout_no_report" }, at);
