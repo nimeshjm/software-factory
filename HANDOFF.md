@@ -2,7 +2,17 @@
 
 Written 2026-10-28, rewritten 2026-10-29 22:45 UTC, updated 2026-11-13 (revise loop, review-event and read-order fixes built after the 2026-11-13 audit found PR 129 stuck). Everything below is the state at that time.
 
-## Do next (checked 2026-11-13 11:37 UTC; revise loop, review-event fix and read-order fix built 2026-11-13, uncommitted, not deployed)
+## Do next (checked 2026-11-22 15:30 UTC; everything below is committed and on `origin/main`)
+
+**Audit 2026-11-22 15:27 UTC (`factory-audit`, window since 23:27 UTC on 11-21).** Healthy, idle, waiting on the owner. 18 runs, all success, no model switches: 16 hourly reviewer runs on Dependabot PR 132 (same head `9b72e4e`, `review ... already posted`, `autonomy:lit requires a human APPROVED review`), incident-responder 44991808477 (Honeycomb noise only), security-triage 44991811420 (119 to 121 already tracked). Model calls 52 of 400. No factory commits, no target issue or PR changed in the window; the last real work was 2026-11-13.
+
+1. **Owner: approve PR 131** (`fix/130-dream-team-endpoint-fix-the-response`, opened by bug-fixer run 43499894358 on 2026-11-13 20:18). CI green, mergeable, reviewer `**Verdict:** approve` at 20:20. The diff matches the recorded Dream Team shape (`top_player`, `team[{element, points, position}]`, boolean `in_dreamteam`), because the evidence was already in issue 130. Until 130 closes, the tick skips the builder with `bugs_first` (130 is the only blocker; the bug-fixer has nothing else: 119 to 121 are `needs-human`). The approval trigger merges it and closes 130.
+2. **Owner: approve or close PR 132** (wrangler 4.158.0 → 4.162.0, Dependabot, 2026-11-18). `wrangler` is in `lit_dependencies`; until then the reviewer cron re-runs on the same head every hour (about 16 model calls a day, no effect).
+3. **Acceptance check and research fetch are now live.** Commit `2f7a247` sat unpushed from 2026-11-13 20:11 to 2026-11-22 15:30 UTC, so the 130 run (43499894358) used the old prompts: no `fetch_url` in research, and PR 131's review has no `acceptance` row. First live proof is still pending: the next factory PR's review shows an `acceptance` row, and the next builder or bug-fixer research log shows `[tool] fetch_url ok` for any endpoint the plan names.
+4. **Gemini 4 Hydrogen took live traffic once:** run 43499894358 switched `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` → `gemini-4-hydrogen` on throttles (20:16 to 20:17 UTC on 11-13) and finished. Its RPD is still unknown.
+5. **Candidate fix (not built):** the hourly Dependabot reviewer could skip a PR whose head SHA already has a `factory:review`, before the model runs, instead of after (apply already prints `review for <sha> already posted`).
+
+**Google AI Pro (owner upgraded from AI Plus, 2026-11-22).** Changes nothing for the factory: the plan does not raise Gemini API quotas on project `gen-lang-client-0040576374`. It includes $10/month of Google Developer Program Cloud credits that can pay for the Gemini API, but only on a billing-linked project, which leaves the free tier; on Prepay (the default) credits apply only after a $5 prepaid purchase and the API returns HTTP 402 at a zero balance. `factory/gemini.py` does not treat 402 as a fallback trigger (every model on the key would fail the same way), so add an explicit 402 error before trying it.
 
 **Revise loop, review event and inputs read-order (built 2026-11-13, uncommitted, not deployed).** Response to the 2026-11-13 audit: PR 129 (the 125 retry) sat as a draft with red CI after the reviewer asked for changes, because nothing revised a factory PR and the reviewer's `REQUEST_CHANGES` on the bot's own PR failed twice with HTTP 422 before landing as a plain comment. Contract: `CONTRACTS.md` `## Labels` → **Revise loop**, `## Post-step rules` → **Review event** and salvage step 5, `## inputs/*.json` (`factory_review`, inputs are inlined), `## Workflow wrappers` (`extra_phases`).
 
@@ -304,14 +314,15 @@ Stack, decided by the owner: Strands Agents (Python) on the Gemini API free tier
 | 43051531921 (bug-fixer, live, 2026-11-11, rerun) | **good**: first live bug-fixer run end to end; PR 126 opened, 118 `status:in-review` | none needed |
 | 43225593828, 43227971800, 43237920290, 43243138668, 43245862580 (live, 2026-11-12, 13:15 to 15:15) | all died in research on `gemini-3.8-flash` before any tool call: hard timeout, `ReadError`, `Deadline expired`, `high demand`; zero tokens; 107 stayed `status:backlog` and the tick retried every 15 minutes | unresponsive-model fallback in `factory/gemini.py`; per-issue failure backoff in `preflight.ts` (see Do next) |
 
-**Open issues on fantasy-football:**
-- **107** spike, `status:backlog`, nothing posted. Released 2026-11-11; five live runs on 2026-11-12 died in research on a throttled 3.8-flash (see Do next). It is the first candidate again once the failure cap lifts or a human dispatches it.
-- **118** closed `status:done` 2026-11-12 (PR 126). **119 to 121** security bugs, `needs-human`, yours (Dependabot bumps for `undici` and `@vitest/mocker`; `sharp` has no PR).
-- **35 and 106** epics, planned 2026-11-12, `status:plan-review needs-human`: read the plan comment, then `plan:approved` or relabel. **115** epic, `status:backlog risk:high`, will be planned next.
+**Open issues on fantasy-football (checked 2026-11-22 15:30 UTC; 16 open):**
+- **130** "Dream Team endpoint: fix the response shape, boolean in_dreamteam flag and add the gameweek 11 fixture", `bug priority:2 risk:low size:S status:in-review` with **PR 131** (bug-fixer run 43499894358, 2026-11-13): CI green, reviewer approved; waits for the owner's `APPROVED` review. Blocks the builder (`bugs_first`) until it closes.
+- **PR 132** wrangler 4.158.0 → 4.162.0 (Dependabot, `autonomy:lit`): waits for the owner.
+- **119 to 121** security bugs, `needs-human`, yours (`sharp`, `undici`, `@vitest/mocker`).
+- **35, 106 and 115** epics, `status:plan-review needs-human`: read the plan comment, then `plan:approved` or relabel.
+- **116** "Remove API-Football", `risk:high size:S status:plan-review`, waits for `plan:approved`.
 - **117** "Spike other football API providers", `spike risk:low`, held with `needs-human`.
-- **116** "Remove API-Football", `risk:high size:S`, gets a plan run when it reaches the front of the queue, then waits for `plan:approved`.
-- **125** "Liga Portugal Dream Team page as best XI source", `risk:low size:S`, `status:in-review` with **PR 129** (run 43264835535, 2026-11-12 17:11): draft, CI red (tests nested inside an `it`), reviewer asked for changes. Revised by the factory on 2026-11-13 18:01 (test nesting fixed), reviewer approved at 18:04; waits for the owner's `APPROVED` review.
-- **108 to 110** awards implementation (epic 106) and **100 to 103** (epic 35) are `author-not-trusted` (bot-filed, no `factory:accepted`).
+- **108 to 110** (epic 106) and **100 to 103** (epic 35) are `author-not-trusted` (bot-filed, no `factory:accepted`).
+- Closed since the last check: **107** (spike findings, 2026-11-13), **125** (PR 129, 2026-11-13), **118** (PR 126, 2026-11-12).
 
 **Verification of the Plan B working tree (2026-10-30, uncommitted at the time of writing):**
 
