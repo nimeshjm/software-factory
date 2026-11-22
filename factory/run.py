@@ -143,7 +143,7 @@ def run(args: argparse.Namespace) -> int:
         tool_log = ToolCallLog()
         hooks = [ToolGuard(log, profile), tool_log, quota, latency, budget,
                  ContextGuard(int(spec.context.get("tool_result_max_chars", 20000)), log)]
-        trace_attrs: dict[str, Any] = {"factory.run_id": str(run_id), "factory.agent": args.agent,
+        trace_attrs: dict[str, Any] = {"gen_ai.conversation.id": str(run_id), "factory.run_id": str(run_id), "factory.agent": args.agent,
                                        "factory.phase": args.phase, "factory.model": spec.model_key, "factory.model_id": spec.model_id,
                                        "factory.dry_run": bool(args.dry_run)}
         if run_json.get("issue_number") is not None:
@@ -155,6 +155,7 @@ def run(args: argparse.Namespace) -> int:
             result.model_switches = model.model_switches
             model.on_switch = lambda old, new: quota.extra_call()
         agent = Agent(
+            name=telemetry.agent_name(args.agent, args.phase),
             model=model,
             system_prompt=load_system_prompt(args.agent, args.phase, Path(os.environ.get("FACTORY_ROOT") or ROOT), profile),
             tools=build_tools(spec.tools),

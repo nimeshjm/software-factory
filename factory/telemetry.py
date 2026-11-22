@@ -6,6 +6,16 @@ import os
 
 _telemetry = None
 
+# Latest OTel GenAI conventions, which Honeycomb's Agent Timeline reads: gen_ai.provider.name,
+# gen_ai.input.messages / gen_ai.output.messages (as span events, so one oversized prompt cannot
+# drop the chat span itself) and gen_ai.tool.call.arguments / .result on execute_tool spans.
+SEMCONV_OPT_IN = "gen_ai_latest_experimental"
+
+
+def agent_name(agent: str, phase: str) -> str:
+    """gen_ai.agent.name: one name per agent and phase, so the timeline groups phases apart."""
+    return f"{agent}/{phase}" if phase and phase != agent else agent
+
 
 def setup(run_id: str = "", agent: str = "", phase: str = "", issue: int | None = None) -> bool:
     """Configure OTLP export. Returns True when an exporter was set up."""
@@ -13,6 +23,7 @@ def setup(run_id: str = "", agent: str = "", phase: str = "", issue: int | None 
     if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
         return False
     os.environ.setdefault("OTEL_SERVICE_NAME", "software-factory")
+    os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", SEMCONV_OPT_IN)
     extra = {"factory.run_id": run_id, "factory.agent": agent, "factory.phase": phase}
     if issue is not None:
         extra["work_tracker.issue_id"] = str(issue)
