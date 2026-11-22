@@ -266,6 +266,7 @@ jobs:
           AGENT: ${{ inputs.agent }}
           PHASES: ${{ steps.phases.outputs.phases }}
           DRY_RUN: ${{ inputs.dry_run }}
+          HEAD_SHA: ${{ inputs.agent == 'reviewer' && steps.gather.outputs.commit_sha || '' }}
         run: scripts/run-phases.sh
 
       - name: Print proposal (dry run)

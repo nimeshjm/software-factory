@@ -8,6 +8,7 @@
   python -m factory.policy amigos --factory inputs/factory.json
   python -m factory.policy check-findings --proposal F --results R [R ...]
   python -m factory.policy evidence-table --results R [R ...]
+  python -m factory.policy reuse-review --pr inputs/pr.json --head-sha SHA   (exit 0 + proposal, or exit 3)
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from .autonomy import classify_autonomy
 from .findings import check_findings, evidence_table
 from .merge import _bumped_deps, merge_policy
 from .plan_gate import plan_gate
+from .reuse_review import reuse_review
 
 
 def _load(path: str):
@@ -76,7 +78,18 @@ def main(argv: list[str] | None = None) -> int:
     pg.add_argument("--plan", required=True)
     am = sub.add_parser("amigos", help="the human three amigos named in the profile")
     am.add_argument("--factory", required=True)
+    rr = sub.add_parser("reuse-review", help="the posted verdict for an unchanged Dependabot head (exit 3: run the model)")
+    rr.add_argument("--pr", required=True)
+    rr.add_argument("--head-sha", default="")
     ns = ap.parse_args(argv)
+
+    if ns.cmd == "reuse-review":
+        proposal = reuse_review(_load(ns.pr), ns.head_sha)
+        if proposal is None:
+            return 3
+        json.dump(proposal, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
 
     if ns.cmd == "plan-gate":
         labels = _labels_of(ns.issue) if ns.issue else []

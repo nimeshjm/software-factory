@@ -13,6 +13,20 @@ read -r -a phase_list <<<"$PHASES"
 # --dry-run only labels result.json and the trace; the workflow skips apply on its own.
 dry=()
 if [ "${DRY_RUN:-}" = "true" ]; then dry=(--dry-run); fi
+# Reviewer on an unchanged Dependabot head: apply would discard a new review, so reuse the posted verdict and
+# let apply re-check merge policy without a model call (CONTRACTS.md, Reviewer on an unchanged head).
+if [ "$AGENT" = reviewer ] && [ "$PHASES" = review ] && [ -f inputs/pr.json ] \
+  && reused="$(uv run --frozen python -m factory.policy reuse-review --pr inputs/pr.json --head-sha "${HEAD_SHA:-}")"; then
+  mkdir -p out/phases/review
+  printf '%s\n' "$reused" >out/phases/review/proposal.json
+  jq -n --arg run "${FACTORY_RUN_ID:-}" \
+    '{run_id: $run, agent: "reviewer", phase: "review", success: true, stop_reason: "reused_review", model_calls: 0,
+      usage: {input_tokens: 0, output_tokens: 0, total_tokens: 0}, cycles: 0, duration_s: 0, guard_events: [],
+      tool_calls: [], throttles: 0, model_ids_used: [], error: null}' >out/phases/review/result.json
+  echo review >out/phases_ok.txt
+  echo "::notice::head ${HEAD_SHA:0:12} already has a factory review (verdict $(jq -r .verdict <<<"$reused")); no model call"
+  exit 0
+fi
 for phase in "${phase_list[@]}"; do
   export OTEL_RESOURCE_ATTRIBUTES="${OTEL_RESOURCE_ATTRIBUTES_BASE:-},factory.phase=${phase}"
   rm -f out/proposal.json out/result.json
