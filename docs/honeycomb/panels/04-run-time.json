@@ -1,0 +1,40 @@
+{
+  "dataset": "factory",
+  "name": "Run time and queue time",
+  "description": "P50 and P95 of duration_s (started to finished) and P95 of queue_s (dispatched to started) per agent. Reads run.finished.",
+  "query": {
+    "calculations": [
+      {
+        "op": "P50",
+        "column": "duration_s"
+      },
+      {
+        "op": "P95",
+        "column": "duration_s"
+      },
+      {
+        "op": "P95",
+        "column": "queue_s"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d"
+    ],
+    "time_range": 604800
+  },
+  "query_style": "graph",
+  "position": {
+    "x_coordinate": 6,
+    "y_coordinate": 9,
+    "width": 6,
+    "height": 4
+  }
+}

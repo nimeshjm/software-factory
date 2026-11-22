@@ -1,0 +1,38 @@
+{
+  "dataset": "software-factory",
+  "name": "Guard events",
+  "description": "Events from the harness guards, by guard and rule. Reads span events whose name ends with .event.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "ends-with",
+        "value": ".event"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "guard",
+      "rule"
+    ],
+    "time_range": 604800,
+    "orders": [
+      {
+        "op": "COUNT",
+        "order": "descending"
+      }
+    ]
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 6,
+    "y_coordinate": 25,
+    "width": 6,
+    "height": 4
+  }
+}

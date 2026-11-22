@@ -33,24 +33,88 @@ async function ensureRun(env: Env, id: string, agent: string, phase: string | nu
     .run();
 }
 
+export interface FinishedBody {
+  status?: string;
+  stop_reason?: string | null;
+  usage?: unknown;
+  phase?: string | null;
+  error?: string | null;
+  throttles?: number | null;
+  dry_run?: boolean | null;
+}
+
+const intOrNull = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : null);
+const secondsBetween = (from: string | null, to: Date | string | null): number | null => {
+  if (!from || !to) return null;
+  const a = Date.parse(from);
+  const b = typeof to === "string" ? Date.parse(to) : to.getTime();
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, Math.floor((b - a) / 1000)) : null;
+};
+
+/** Pure: the `run.started` Honeycomb event (see CONTRACTS.md, Honeycomb events). */
+export function startedEvent(row: RunRow, body: { phase?: string | null; workflow_run_url?: string | null }, now: Date): Record<string, unknown> {
+  return {
+    name: "run.started",
+    run_id: row.id,
+    agent: row.agent,
+    subject: row.subject,
+    phase: body.phase ?? row.phase ?? null,
+    trigger: row.trigger ?? null,
+    workflow_run_url: body.workflow_run_url ?? row.workflow_run_url ?? null,
+    queue_s: secondsBetween(row.dispatched_at, now),
+  };
+}
+
+/** Pure: the `run.finished` Honeycomb event from the run row (read after the update) and the report body. */
+export function finishedEvent(row: RunRow, body: FinishedBody, now: Date): Record<string, unknown> {
+  const u = (body.usage && typeof body.usage === "object" ? body.usage : {}) as Record<string, unknown>;
+  const started = row.started_at;
+  return {
+    name: "run.finished",
+    run_id: row.id,
+    agent: row.agent,
+    subject: row.subject,
+    trigger: row.trigger ?? null,
+    status: body.status ?? row.status,
+    stop_reason: body.stop_reason ?? null,
+    phase: body.phase ?? row.phase ?? null,
+    error: typeof body.error === "string" ? body.error.slice(0, 300) : null,
+    model_calls: row.model_calls,
+    reserved_calls: row.reserved_calls,
+    throttles: intOrNull(body.throttles),
+    "usage.input_tokens": intOrNull(u.input_tokens),
+    "usage.output_tokens": intOrNull(u.output_tokens),
+    "usage.total_tokens": intOrNull(u.total_tokens),
+    duration_s: started ? secondsBetween(started, now) : null,
+    queue_s: started ? secondsBetween(row.dispatched_at, started) : null,
+    issue_number: row.issue_number ?? null,
+    pr_number: row.pr_number ?? null,
+    workflow_run_url: row.workflow_run_url ?? null,
+    dry_run: typeof body.dry_run === "boolean" ? body.dry_run : null,
+  };
+}
+
 export async function handleStarted(req: Request, env: Env, ctx: ExecutionContext, id: string): Promise<Response> {
   const b = (await req.json().catch(() => null)) as { agent?: string; phase?: string; workflow_run_url?: string } | null;
   if (!b) return json({ error: "bad json" }, 400);
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
   await ensureRun(env, id, b.agent ?? "", b.phase ?? null, now);
   await env.DB.prepare("UPDATE runs SET started_at = ?, status = 'started', workflow_run_url = ?, phase = COALESCE(?, phase) WHERE id = ? AND status IN ('dispatched','started')")
     .bind(now, b.workflow_run_url ?? null, b.phase ?? null, id)
     .run();
-  void sendEvent(env, { name: "run.started", run_id: id, agent: b.agent, phase: b.phase }, ctx);
+  const row = await env.DB.prepare("SELECT * FROM runs WHERE id = ?").bind(id).first<RunRow>();
+  if (row) void sendEvent(env, startedEvent(row, b, nowDate), ctx);
   return json({ ok: true });
 }
 
 export async function handleFinished(req: Request, env: Env, ctx: ExecutionContext, id: string): Promise<Response> {
-  const b = (await req.json().catch(() => null)) as {
-    status?: string; stop_reason?: string; model_calls?: number; usage?: unknown; pr_number?: number | null; issue_number?: number | null; agent?: string;
-  } | null;
+  const b = (await req.json().catch(() => null)) as (FinishedBody & {
+    model_calls?: number; pr_number?: number | null; issue_number?: number | null; agent?: string;
+  }) | null;
   if (!b || !b.status || !FINAL.includes(b.status)) return json({ error: "bad status" }, 400);
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
   await ensureRun(env, id, b.agent ?? "", null, now);
   const calls = Number.isFinite(b.model_calls) ? Math.max(0, Math.floor(b.model_calls as number)) : 0;
   await env.DB.prepare(
@@ -59,11 +123,9 @@ export async function handleFinished(req: Request, env: Env, ctx: ExecutionConte
     .bind(b.status, b.stop_reason ?? null, calls, now, toInt(b.pr_number), toInt(b.issue_number), id)
     .run();
   await env.DB.prepare("DELETE FROM locks WHERE run_id = ?").bind(id).run();
-  void sendEvent(env, { name: "run.finished", run_id: id, status: b.status, stop_reason: b.stop_reason, model_calls: calls, usage: JSON.stringify(b.usage ?? null) }, ctx);
+  const row = await env.DB.prepare("SELECT * FROM runs WHERE id = ?").bind(id).first<RunRow>();
+  if (row) void sendEvent(env, finishedEvent(row, b, nowDate), ctx);
   if (ALERT_STATUSES.has(b.status)) {
-    const row = await env.DB.prepare("SELECT agent, subject, workflow_run_url FROM runs WHERE id = ?")
-      .bind(id)
-      .first<{ agent: string; subject: string; workflow_run_url: string | null }>();
     const text = failureAlert(id, { status: b.status, stop_reason: b.stop_reason }, row);
     if (text) void sendAlert(env, text, ctx);
   }

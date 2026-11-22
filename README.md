@@ -112,6 +112,27 @@ All wrappers with `dry_run=true`, then `dry_run=false`, then control-plane dispa
 
 `curl -X POST -H "Authorization: Bearer $FACTORY_TOKEN" $FACTORY_URL/admin/pause` stops dispatch within one tick; `/admin/resume` restarts it. `GET /status` shows quota, in-flight runs and every decision of the last tick, including why each backlog issue was skipped; the fields and skip reasons are documented in `control-plane/README.md`.
 
-## Honeycomb board `factory`
+## Honeycomb board
 
-Tool-guard denials by rule and agent; model calls per run vs cap (heatmap); runs without `finished` per day (trigger to webhook); `stop_reason` distribution; throttle retries per run; merges per day by `autonomy` label.
+Board link: _to be filled by the owner after the first run of `scripts/honeycomb-board.sh` (it prints `board: <url>` and writes the id to `docs/honeycomb/board.json`)._
+
+The board answers "are the agents' runs healthy?" from two Honeycomb datasets in the EU environment, last 7 days: `factory` (control-plane events: run panels, panels 01-05, 09, 12) and `software-factory` (the harness's OTLP spans and span events: panels 06-08, 10, 11; the two cannot be joined), with `agent` and `dry_run` as board filters. It is code: `docs/honeycomb/derived_columns.json`, `docs/honeycomb/panels/*.json` (one saved query, annotation and panel each) and `docs/honeycomb/board.json`; the event fields are in `CONTRACTS.md` under "Honeycomb events".
+
+Apply it (owner only, never from Actions): `HONEYCOMB_CONFIG_KEY=<key> scripts/honeycomb-board.sh`, with a Honeycomb configuration key that has "Manage Queries and Columns" and "Manage Public Boards" (keep it out of the repo and out of Actions secrets). It first lists each dataset's columns and skips, with a warning naming the missing columns, every derived column, panel and board filter that needs a column that does not exist yet (Honeycomb only knows a column once an event has carried it). So the first run after a deploy gives a partial board, and `applied N of M panels` says which are missing; re-run later to fill it in (with no applicable panel it leaves the board alone). It then upserts the derived columns by alias, creates fresh queries and annotations, then creates the board (first run: commit the id it writes to `board.json`) or replaces it and deletes the previous annotations. `scripts/honeycomb-board.sh --dry-run` prints every request without a key and without calling the API.
+
+| Panel file | Shows | Reads |
+|---|---|---|
+| `01-run-outcomes` | runs per day by `agent_d`, stacked by `status` | `run.finished`: `agent_d`, `status` |
+| `02-where-runs-die` | table of runs with `status` failed, timeout, lost or denied | `run.finished`: `run_id`, `agent_d`, `subject`, `phase`, `stop_reason`, `error`, `workflow_run_url`, `status` |
+| `03-stop-reasons` | stop reasons by agent | `run.finished`: `agent_d`, `stop_reason` |
+| `04-run-time` | P50/P95 run time, P95 queue time | `run.finished`: `duration_s`, `queue_s` |
+| `05-model-calls-vs-cap` | heatmap of model calls, daily max of calls/reservation | `run.finished`: `model_calls`, `calls_ratio` (derived from `reserved_calls`) |
+| `06-tokens` | input and output tokens per agent, phase, model | model spans: `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `factory.agent`, `factory.phase`, `factory.model_id` |
+| `07-model-switches` | fallbacks by from, to, reason | span event `factory.model_switch`: `factory.model.from`, `.to`, `.reason` |
+| `08-model-retries` | throttles, stalls, 5xx per day | span event `factory.model_retry`: `factory.agent`, `factory.retry.reason`, `factory.model_id` |
+| `09-throttles` | throttles per agent | `run.finished`: `throttles` |
+| `10-tool-guard-blocked` | denied tool calls | span event `tool_guard.blocked`: `factory.agent`, `rule` |
+| `11-guard-events` | other guard events | span events named `*.event`: `guard`, `rule` |
+| `12-lost-runs` | runs marked lost by the tick | `run.finished` with `status = lost`: `agent_d` |
+
+`agent_d` is a derived column on `factory`: `agent`, else parsed from `run_id` (so events from before the `agent` field exist still group by agent).

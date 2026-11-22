@@ -87,9 +87,15 @@ class FactoryGeminiModel(GeminiModel):
         if self.on_switch:
             self.on_switch(old, new)
 
+    def _record_retry(self, reason: str, attempt: int) -> None:
+        trace.get_current_span().add_event("factory.model_retry", {
+            "factory.model_id": self.config["model_id"], "factory.retry.reason": reason,
+            "factory.retry.attempt": attempt})
+
     def _unresponsive(self, detail: str) -> bool:
         """Count one unresponsive call; True when the threshold is hit and a fallback remains (model already switched)."""
         self.unresponsive_calls += 1
+        self._record_retry(detail, self.unresponsive_calls)
         if self.unresponsive_calls >= self.unresponsive_switch_after and self.fallback_model_ids:
             self._switch_model(reason=f"unresponsive:{detail}")
             self.unresponsive_calls = 0
@@ -133,6 +139,7 @@ class FactoryGeminiModel(GeminiModel):
                 if yielded:
                     raise
                 if is_daily_quota_error(error):
+                    self._record_retry("daily_quota", 1)
                     if not self.fallback_model_ids:
                         raise
                     self._switch_model()

@@ -1,0 +1,37 @@
+{
+  "dataset": "software-factory",
+  "name": "Tokens per phase and model",
+  "description": "Input and output tokens from the harness model spans, by agent, phase and model.",
+  "query": {
+    "calculations": [
+      {
+        "op": "SUM",
+        "column": "gen_ai.usage.input_tokens"
+      },
+      {
+        "op": "SUM",
+        "column": "gen_ai.usage.output_tokens"
+      }
+    ],
+    "filters": [
+      {
+        "column": "gen_ai.usage.input_tokens",
+        "op": "exists"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.agent",
+      "factory.phase",
+      "factory.model_id"
+    ],
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 17,
+    "width": 12,
+    "height": 4
+  }
+}

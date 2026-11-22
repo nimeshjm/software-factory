@@ -1,0 +1,38 @@
+{
+  "dataset": "factory",
+  "name": "Stop reasons by agent",
+  "description": "How runs stop (end_turn, limit_*, quota_cap, timeout, exception, ...) per agent. Reads run.finished.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d",
+      "stop_reason"
+    ],
+    "time_range": 604800,
+    "orders": [
+      {
+        "op": "COUNT",
+        "order": "descending"
+      }
+    ]
+  },
+  "query_style": "graph",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 9,
+    "width": 6,
+    "height": 4
+  }
+}

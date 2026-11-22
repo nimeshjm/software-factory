@@ -1,0 +1,41 @@
+{
+  "dataset": "factory",
+  "name": "Run outcomes per day",
+  "description": "Runs finished per day by agent and status (success, failed, timeout, lost, denied). Reads run.finished; agent_d backfills old events from run_id.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d",
+      "status"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "visualization_settings": {
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stacked"
+      }
+    ]
+  },
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 0,
+    "width": 12,
+    "height": 4
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "dataset": "software-factory",
+  "name": "Model switches",
+  "description": "Fallbacks to another model, by from, to and reason (daily_quota or unresponsive:<detail>). Reads the factory.model_switch span event.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.model_switch"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.model.from",
+      "factory.model.to",
+      "factory.model.reason"
+    ],
+    "time_range": 604800,
+    "orders": [
+      {
+        "op": "COUNT",
+        "order": "descending"
+      }
+    ]
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 21,
+    "width": 4,
+    "height": 4
+  }
+}

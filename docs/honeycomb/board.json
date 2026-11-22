@@ -1,0 +1,17 @@
+{
+  "name": "factory",
+  "description": "Agents run health: are the factory's agent runs healthy? Run outcomes, failures, stop reasons, run time, model calls vs cap, tokens, model health and guard denials. Built from docs/honeycomb/ by scripts/honeycomb-board.sh.",
+  "type": "flexible",
+  "layout_generation": "manual",
+  "preset_filters": [
+    {
+      "column": "agent_d",
+      "alias": "agent"
+    },
+    {
+      "column": "dry_run",
+      "alias": "dry_run"
+    }
+  ],
+  "id": null
+}

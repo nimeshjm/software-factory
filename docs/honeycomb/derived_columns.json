@@ -1,0 +1,14 @@
+[
+  {
+    "dataset": "factory",
+    "alias": "agent_d",
+    "expression": "COALESCE($agent, REG_VALUE($run_id, `^([a-z]+(-[a-z]+)*)-[0-9]{12}`))",
+    "description": "The agent for run.finished events: agent, else parsed from run_id (backfills events sent before the agent field existed)."
+  },
+  {
+    "dataset": "factory",
+    "alias": "calls_ratio",
+    "expression": "DIV($model_calls, $reserved_calls)",
+    "description": "model_calls / reserved_calls on run.finished: 1.0 means the run used its whole reservation."
+  }
+]

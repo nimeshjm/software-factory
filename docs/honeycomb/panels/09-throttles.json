@@ -1,0 +1,39 @@
+{
+  "dataset": "factory",
+  "name": "Throttles per agent",
+  "description": "Sum of throttles (retried throttled calls) reported by finished runs, per agent. Reads run.finished.",
+  "query": {
+    "calculations": [
+      {
+        "op": "SUM",
+        "column": "throttles"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d"
+    ],
+    "time_range": 604800,
+    "orders": [
+      {
+        "op": "SUM",
+        "column": "throttles",
+        "order": "descending"
+      }
+    ]
+  },
+  "query_style": "graph",
+  "position": {
+    "x_coordinate": 8,
+    "y_coordinate": 21,
+    "width": 4,
+    "height": 4
+  }
+}

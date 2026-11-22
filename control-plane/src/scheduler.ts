@@ -3,6 +3,7 @@ import { dispatchRun } from "./dispatch";
 import { listIssues, listOpenPRs } from "./github";
 import { sendAlert } from "./alert";
 import { sendEvent } from "./honeycomb";
+import { finishedEvent } from "./ledger";
 import { planTick, type Decision, type TickState } from "./preflight";
 import { isPaused, loadQuota } from "./quota";
 import type { Env, RunRow } from "./types";
@@ -61,6 +62,8 @@ export async function runTick(env: Env, ctx: ExecutionContext, now: Date = new D
           .bind(now.toISOString(), d.runId)
           .run();
         await env.DB.prepare("DELETE FROM locks WHERE run_id = ?").bind(d.runId).run();
+        const lost = await env.DB.prepare("SELECT * FROM runs WHERE id = ?").bind(d.runId).first<RunRow>();
+        if (lost) void sendEvent(env, finishedEvent(lost, { status: "lost", stop_reason: "timeout_no_report" }, now), ctx);
         await sendAlert(env, `factory: run ${d.runId} marked lost (no report before timeout)`, ctx);
       } else if (d.kind === "dispatch") {
         const r = await dispatchRun(env, { agent: d.agent, subject: d.subject, inputs: d.inputs, reservedCalls: d.reservedCalls, trigger: "cron" }, ctx, now);

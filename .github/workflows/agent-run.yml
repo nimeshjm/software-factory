@@ -327,4 +327,7 @@ jobs:
           PR: ${{ inputs.pr }}
           JOB_STATUS: ${{ job.status }}
           DENIED: ${{ steps.ref.outputs.denied }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PHASES: ${{ steps.phases.outputs.phases }}
+          PHASE: ${{ inputs.phase }}
         run: scripts/ledger-post.sh finished

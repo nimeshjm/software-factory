@@ -1,0 +1,37 @@
+{
+  "dataset": "factory",
+  "name": "Model calls vs cap",
+  "description": "Heatmap of model_calls per agent and the daily maximum of calls_ratio (model_calls / reserved_calls; 1.0 means the run used its whole reservation). Reads run.finished.",
+  "query": {
+    "calculations": [
+      {
+        "op": "HEATMAP",
+        "column": "model_calls"
+      },
+      {
+        "op": "MAX",
+        "column": "calls_ratio"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 13,
+    "width": 12,
+    "height": 4
+  }
+}

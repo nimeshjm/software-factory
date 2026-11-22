@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { buildStatus, failureAlert } from "../src/ledger";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildStatus, failureAlert, finishedEvent, startedEvent } from "../src/ledger";
+import { sendEvent } from "../src/honeycomb";
 import { computeQuota } from "../src/quota";
 import type { RunRow } from "../src/types";
 
@@ -39,5 +40,73 @@ describe("failureAlert", () => {
   });
   it("stays quiet for success, denied and lost", () => {
     for (const status of ["success", "denied", "lost"]) expect(failureAlert("r", { status }, row)).toBeNull();
+  });
+});
+
+describe("finishedEvent", () => {
+  const started = run({
+    id: "builder-202610210100", phase: "implement", trigger: "cron", issue_number: 7, pr_number: 9, model_calls: 12, reserved_calls: 100,
+    dispatched_at: "2026-10-21T11:00:00Z", started_at: "2026-10-21T11:00:45Z", workflow_run_url: "https://example/run/1",
+  });
+  const at = new Date("2026-10-21T11:10:00.900Z");
+  it("sends the whole flat field set", () => {
+    const e = finishedEvent(started, {
+      status: "failed", stop_reason: "exception", usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      error: "boom", throttles: 3, dry_run: false,
+    }, at);
+    expect(e).toEqual({
+      name: "run.finished", run_id: "builder-202610210100", agent: "builder", subject: "issue:1", trigger: "cron",
+      status: "failed", stop_reason: "exception", phase: "implement", error: "boom", model_calls: 12, reserved_calls: 100,
+      throttles: 3, "usage.input_tokens": 100, "usage.output_tokens": 20, "usage.total_tokens": 120,
+      duration_s: 555, queue_s: 45, issue_number: 7, pr_number: 9, workflow_run_url: "https://example/run/1", dry_run: false,
+    });
+  });
+  it("gives null durations for a run that never started and nulls for absent fields", () => {
+    const e = finishedEvent(run({ id: "x" }), { status: "timeout" }, at);
+    expect(e.duration_s).toBeNull();
+    expect(e.queue_s).toBeNull();
+    for (const k of ["stop_reason", "phase", "error", "throttles", "usage.input_tokens", "usage.output_tokens", "usage.total_tokens", "dry_run", "trigger", "workflow_run_url"]) {
+      expect(e).toHaveProperty(k, null);
+    }
+  });
+  it("clips error to 300 chars", () => {
+    expect((finishedEvent(started, { status: "failed", error: "x".repeat(500) }, at).error as string).length).toBe(300);
+  });
+  it("prefers body.phase over row.phase", () => {
+    expect(finishedEvent(started, { status: "failed", phase: "plan" }, at).phase).toBe("plan");
+    expect(finishedEvent(started, { status: "failed" }, at).phase).toBe("implement");
+  });
+  it("has the lost shape", () => {
+    const e = finishedEvent(started, { status: "lost", stop_reason: "timeout_no_report" }, at);
+    expect(e).toMatchObject({ status: "lost", stop_reason: "timeout_no_report", phase: "implement", error: null, throttles: null, dry_run: null, model_calls: 12 });
+    expect(e["usage.total_tokens"]).toBeNull();
+  });
+});
+
+describe("startedEvent", () => {
+  const row = run({ id: "r1", trigger: "cron", phase: "plan", dispatched_at: "2026-10-21T11:00:00Z", workflow_run_url: "https://row" });
+  const at = new Date("2026-10-21T11:00:30.500Z");
+  it("takes phase and url from the body, falling back to the row", () => {
+    expect(startedEvent(row, { phase: "implement", workflow_run_url: "https://body" }, at)).toEqual({
+      name: "run.started", run_id: "r1", agent: "builder", subject: "issue:1", phase: "implement", trigger: "cron", workflow_run_url: "https://body", queue_s: 30,
+    });
+    expect(startedEvent(row, {}, at)).toMatchObject({ phase: "plan", workflow_run_url: "https://row" });
+  });
+});
+
+describe("sendEvent", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("posts flat JSON with the service field to the dataset", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const env = { HONEYCOMB_API_KEY: "k", HONEYCOMB_DATASET: "factory" } as never;
+    await sendEvent(env, { name: "run.finished", "usage.input_tokens": 5, error: null });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.eu1.honeycomb.io/1/events/factory");
+    expect(init.method).toBe("POST");
+    expect(init.headers["x-honeycomb-team"]).toBe("k");
+    expect(init.headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(init.body)).toEqual({ service: "factory-control-plane", name: "run.finished", "usage.input_tokens": 5, error: null });
   });
 });

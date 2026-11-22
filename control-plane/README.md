@@ -141,6 +141,7 @@ Tests: `npm test` (plain node vitest; WebCrypto is global). `npm run typecheck` 
 - Cron triggers: 5 per account on free; this Worker uses 1.
 - D1: 100k rows written/day, 5M read/day. A tick writes a handful of rows; the ledger writes about 3 per run.
 - Subrequests: 50 per invocation. A tick does at most: 2 GitHub list calls (up to 3 pages each via the `maxPages` cap), 0-4 token/installation calls (cached in `tokens` until 5 min before expiry), 1 dispatch per dispatch decision, 1 Honeycomb event per decision (the 06:00 UTC tick makes two dispatch decisions, incident responder and security-triage), alerts. Do not raise `maxPages` without budgeting.
+- Report handlers: each `started` and `finished` report does one extra D1 read (the run row for the Honeycomb event; `finished`'s failure alert reuses it). Each lost run in a tick adds one D1 read and one Honeycomb event (`run.finished`).
 - CPU: 10 ms per request on free; JWT signing only happens on a token cache miss (about hourly).
 
 ## Notes

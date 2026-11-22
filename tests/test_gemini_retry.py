@@ -252,3 +252,67 @@ def test_model_switch_serialises_with_from_key():
     r = RunResult(run_id="r1", agent="builder", phase="plan", success=True, stop_reason="end_turn",
                   model_switches=[{"from": "a", "to": "b", "reason": "daily_quota"}])
     assert json.loads(r.model_dump_json())["model_switches"] == [{"from": "a", "to": "b", "reason": "daily_quota"}]
+
+
+class _FakeSpan:
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+
+    def add_event(self, name, attributes=None):
+        self.events.append((name, dict(attributes or {})))
+
+    def set_attribute(self, key, value):
+        pass
+
+
+@pytest.fixture
+def span(monkeypatch):
+    fake = _FakeSpan()
+    monkeypatch.setattr("factory.gemini.trace.get_current_span", lambda: fake)
+    return fake
+
+
+def _retry(model_id, reason, attempt):
+    return ("factory.model_retry", {"factory.model_id": model_id, "factory.retry.reason": reason,
+                                    "factory.retry.attempt": attempt})
+
+
+def test_two_throttles_emit_retry_events_then_switch(monkeypatch, span):
+    model, _ = _fallback_model(monkeypatch, [_quota_error(MINUTE), _quota_error(MINUTE), None], ["b"])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert _drain(model) == [{"ok": True}]
+    assert [name for name, _ in span.events] == ["factory.model_retry", "factory.model_retry", "factory.model_switch"]
+    assert span.events[0] == _retry("a", "throttled", 1)
+    assert span.events[1] == _retry("a", "throttled", 2)
+
+
+def test_stall_emits_retry_event(monkeypatch, span):
+    async def stalls(self, *a, **k):
+        yield {"messageStart": {"role": "assistant"}}
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(GeminiModel, "stream", stalls)
+    model = FactoryGeminiModel(client_args={"api_key": "x"}, model_id="a", first_event_timeout_s=0.05)
+    with pytest.raises(ModelThrottledException, match="no response within"):
+        _drain(model)
+    assert span.events == [_retry("a", "stall", 1)]
+
+
+def test_daily_quota_without_fallback_still_emits_retry_event(monkeypatch, span):
+    model, _ = _fallback_model(monkeypatch, [_quota_error(DAILY)], [])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert span.events == [_retry("a", "daily_quota", 1)]
+
+
+def test_failure_after_content_emits_no_retry_event(monkeypatch, span):
+    async def partial(self, *a, **k):
+        yield {"ok": True}
+        raise _quota_error(MINUTE)
+
+    monkeypatch.setattr(GeminiModel, "stream", partial)
+    model = FactoryGeminiModel(client_args={"api_key": "x"}, model_id="a", fallback_model_ids=["b"])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    assert span.events == []

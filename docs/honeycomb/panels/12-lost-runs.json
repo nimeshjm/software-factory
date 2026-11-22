@@ -1,0 +1,37 @@
+{
+  "dataset": "factory",
+  "name": "Lost runs",
+  "description": "Runs the tick marked lost because no finished report arrived, per agent. Reads run.finished with status lost.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      },
+      {
+        "column": "status",
+        "op": "=",
+        "value": "lost"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 29,
+    "width": 12,
+    "height": 3
+  }
+}

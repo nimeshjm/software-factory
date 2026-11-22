@@ -1,0 +1,42 @@
+{
+  "dataset": "software-factory",
+  "name": "Model retries per day",
+  "description": "Failed model requests the fallback logic counted (throttled, stall, server_error, transport_error, daily_quota), per agent and model. Reads the factory.model_retry span event.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.model_retry"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.agent",
+      "factory.retry.reason",
+      "factory.model_id"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "visualization_settings": {
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stacked"
+      }
+    ]
+  },
+  "position": {
+    "x_coordinate": 4,
+    "y_coordinate": 21,
+    "width": 4,
+    "height": 4
+  }
+}
