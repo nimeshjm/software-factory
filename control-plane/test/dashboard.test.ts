@@ -115,6 +115,11 @@ describe("buildDashboard", () => {
     expect(d.blocked.find((b) => b.subject === "pr:99")?.reason).toContain("could not handle");
     expect(d.blocked.find((b) => b.kind === "stuck-in-progress")?.action).toBe(`gh issue edit 50 -R ${REPO} --remove-label status:in-progress --add-label status:backlog`);
     expect(d.blocked.find((b) => b.kind === "bugs-first")?.title).toBe("Open bug #125 at priority 1 or 2");
+    // every blocker carries a plain-English step for a human
+    expect(d.blocked.every((b) => b.todo.length > 0)).toBe(true);
+    expect(d.blocked.find((b) => b.kind === "awaiting-risk")?.todo).toContain("risk:low");
+    expect(d.blocked.find((b) => b.kind === "plan-review")?.todo).toBe("Read the plan comment on issue #116. If it looks right, add the label plan:approved.");
+    expect(d.blocked.find((b) => b.kind === "lit-pr")?.todo).toContain("approve it");
     const builder = d.next.queue.find((q) => q.agent === "builder")!;
     expect(builder.gate).toBe("bugs_first");
     expect(builder.items.map((i) => [i.number, i.reason])).toEqual([
@@ -260,6 +265,8 @@ describe("helpers and html", () => {
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).not.toContain("<script>alert");
     expect(html).toContain("awaiting-risk");
+    expect(html).toContain("<b>To do:</b> Size issue #1: add the label risk:low");
+    expect(html).toContain("you: add risk:low or risk:high");
     expect(html).toContain('href="?hours=24"');
   });
 });

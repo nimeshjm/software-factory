@@ -80,6 +80,8 @@ export interface Blocker {
   subject: string;
   title: string;
   reason: string;
+  /** Plain-English step for a human (set a label, approve a PR), or what it is waiting on. */
+  todo: string;
   /** What clears it: a command when one exists, otherwise a sentence. */
   action: string;
   url: string | null;
@@ -190,6 +192,45 @@ function runIssue(r: RunRow): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** One plain-English sentence per block kind: what a human does on GitHub, or what the item is waiting for. */
+export function humanTodo(kind: BlockKind, subject: string): string {
+  const m = /^(issue|pr|run):(.+)$/.exec(subject);
+  const ref = m ? (m[1] === "run" ? "the run" : `${m[1] === "pr" ? "PR" : "issue"} #${m[2]}`) : "it";
+  switch (kind) {
+    case "paused": return "Resume the factory once whatever made you pause it is fixed.";
+    case "overdue-run": return "Wait for the next tick to mark it lost. If the Actions run died, move its issue back to status:backlog.";
+    case "stuck-in-progress": return `On ${ref}, swap the label status:in-progress for status:backlog so a tick picks it up again.`;
+    case "orphan-in-review": return `Check whether the PR for ${ref} merged. If it did, label it status:done and close it. If not, relabel it status:backlog.`;
+    case "failed-run": return "Read the run log. If the failure was transient, relabel the issue status:backlog to retry. If a guard stopped it, fix the cause first.";
+    case "failure-cap": return `Read why the last runs on ${ref} failed and fix the cause, then re-run it by hand or wait for the cap to lift.`;
+    case "plan-review": return `Read the plan comment on ${ref}. If it looks right, add the label plan:approved.`;
+    case "needs-human": return `Do what the factory asked for in the comments on ${ref}, then remove the label needs-human.`;
+    case "awaiting-risk": return `Size ${ref}: add the label risk:low to let the builder go ahead, or risk:high to hold its plan for your review.`;
+    case "author-not-trusted": return `Read ${ref}. If the factory should work on it, add the label factory:accepted.`;
+    case "blocked-by": return "Nothing to do: it starts when the issues it depends on close.";
+    case "backoff": return "Nothing to do: the tick retries it automatically after the backoff.";
+    case "lit-pr": return `Review ${ref} and approve it on GitHub. The reviewer agent merges it once checks are green and threads are resolved.`;
+    case "needs-human-pr": return `Take over ${ref}: fix it by hand (see the factory comments), then remove the label needs-human.`;
+    case "bugs-first": return "Nothing to do unless the bug can wait: label it needs-human to let the builder move on.";
+    case "backpressure": return "Merge or close one of the open factory PRs so the builder can start another.";
+    case "quota": return "Nothing to do: the daily model-call quota resets at midnight UTC.";
+  }
+}
+
+/** Short hint for a held queue item, keyed by the tick's skip reason. */
+export function queueHint(reason: string | null): string {
+  if (!reason) return "";
+  if (reason === "needs-human") return "you: act, then remove needs-human";
+  if (reason === "awaiting-risk") return "you: add risk:low or risk:high";
+  if (reason === "author-not-trusted") return "you: add factory:accepted";
+  if (reason === "has-open-pr") return "waits: its PR is open";
+  if (reason === "revise") return "";
+  if (reason.startsWith("blocked-by:")) return "waits: dependency open";
+  if (reason.startsWith("retry-after:")) return "waits: retry backoff";
+  if (reason.startsWith("failure-cap:")) return "you: check the failed runs";
+  return "";
+}
+
 // ------------------------------------------------------------------ pure build
 
 export function buildDashboard(input: DashboardInput): DashboardDoc {
@@ -262,7 +303,8 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
 
   // ---- blocked
   const blocked: Blocker[] = [];
-  const add = (b: Omit<Blocker, "needs_human">) => blocked.push({ ...b, needs_human: HUMAN_KINDS.has(b.kind) });
+  const add = (b: Omit<Blocker, "needs_human" | "todo">) =>
+    blocked.push({ ...b, todo: humanTodo(b.kind, b.subject), needs_human: HUMAN_KINDS.has(b.kind) });
   if (input.paused) {
     add({
       kind: "paused", subject: "factory", title: "Control plane paused", reason: "The kill switch is on: ticks dispatch nothing and webhooks are skipped.",
@@ -577,7 +619,7 @@ export function dashboardHtml(d: DashboardDoc): string {
           const rows = items
             .map(
               (b) =>
-                `<div class="item"><div>${link(b.url, b.subject)} <span class="dim">${esc(b.title)}</span></div>${shared ? "" : `<div class="dim">${esc(b.reason)}</div>`}<code class="act">${esc(b.action)}</code></div>`,
+                `<div class="item"><div>${link(b.url, b.subject)} <span class="dim">${esc(b.title)}</span></div><div class="todo">${b.needs_human ? "<b>To do:</b> " : "<b>Waiting:</b> "}${esc(b.todo)}</div>${shared ? "" : `<div class="dim">${esc(b.reason)}</div>`}<code class="act">${esc(b.action)}</code></div>`,
             )
             .join("");
           return `<div class="blk"><h3><span class="pill ${you ? "bad" : "mute"}">${you ? "&#9679; you" : "&#9675; waits"}</span> ${esc(kind)} <span class="dim">(${items.length})</span></h3>${shared ? `<p class="dim">${esc(items[0].reason)}</p>` : ""}${rows}</div>`;
@@ -607,7 +649,7 @@ export function dashboardHtml(d: DashboardDoc): string {
               ? `<p>next tick dispatches <b>${link(first.url, `#${first.number}`)}</b> ${esc(first.title)}</p>`
               : `<p>every candidate is blocked (see above)</p>`;
       const list = items.length
-        ? `<ol>${items.map((i) => `<li class="${i.eligible ? "ok" : "held"}">${link(i.url, `#${i.number}`)} ${esc(i.title)} ${i.eligible ? "" : `<span class="pill mute">${esc(i.reason ?? "")}</span>`}</li>`).join("")}</ol>`
+        ? `<ol>${items.map((i) => `<li class="${i.eligible ? "ok" : "held"}">${link(i.url, `#${i.number}`)} ${esc(i.title)} ${i.eligible ? "" : `<span class="pill mute">${esc(i.reason ?? "")}</span>${queueHint(i.reason) ? ` <span class="hint">${esc(queueHint(i.reason))}</span>` : ""}`}</li>`).join("")}</ol>`
         : "";
       return `<div class="q"><h3>${esc(agent)} ${gateText}</h3>${lead}${list}</div>`;
     })
@@ -654,7 +696,7 @@ a{color:var(--accent)}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;vertical-align:top;padding:5px 8px;border-bottom:1px solid var(--line)}th{color:var(--fg2);font-weight:500;font-size:12px}
 .pill{display:inline-block;padding:0 7px;border-radius:9px;font-size:12px;white-space:nowrap;border:1px solid}.good{color:var(--good);border-color:var(--good)}.bad{color:var(--bad);border-color:var(--bad)}.warn{color:var(--warn);border-color:var(--warn)}.mute{color:var(--mute);border-color:var(--mute)}
 code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace}code.act{white-space:pre-wrap;word-break:break-all;display:block;color:var(--fg2)}
-.dim{color:var(--fg2)}.empty{color:var(--fg2);font-style:italic}.wrap{overflow-x:auto}
+.dim{color:var(--fg2)}.todo{margin:2px 0}.hint{font-size:12px;color:var(--fg2);font-style:italic}.empty{color:var(--fg2);font-style:italic}.wrap{overflow-x:auto}
 .blocks{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.blk{background:var(--card);border-radius:8px;padding:8px 12px}.blk h3{margin:4px 0 6px}.blk p{margin:0 0 6px}.item{padding:6px 0;border-top:1px solid var(--line)}
 .queues{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}.q{background:var(--card);border-radius:8px;padding:8px 12px}.q ol{margin:4px 0 0;padding-left:20px}.q li{margin:2px 0}.q li.held{color:var(--fg2)}
 .bars{display:flex;gap:6px;align-items:flex-end;height:110px;margin:28px 0 28px}.bar{flex:1;max-width:60px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;position:relative}.bar div{width:100%;background:var(--accent);border-radius:4px 4px 0 0;min-height:1px}.bar span{font-size:11px;color:var(--fg2);position:absolute;bottom:-18px}.bar b{font-size:11px;font-weight:500;position:absolute;top:-16px}
