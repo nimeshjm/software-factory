@@ -1,6 +1,23 @@
 # software-factory
 
-An autonomous software factory for one target repository, named in `factory.config.json#target`. The target describes its own toolchain, protected paths, risk rules and smoke checks in a `factory.yml` profile on its default branch (see the Target profile section of `CONTRACTS.md` and `templates/target/`). Intent and production signals feed a queue; Strands agents (Gemini free tier) run in GitHub Actions and emit structured proposals; deterministic post-steps apply them (labels, comments, PRs, merges); a free-tier Cloudflare Worker is the control plane (pre-flight, locks, quota, kill switch). Agents propose, pipelines act: no agent process holds a GitHub, Cloudflare or smoke-test token.
+An autonomous software factory that takes a target repository from issue to merged, deployed and verified change. LLM agents run in a zero-trust sandbox and can only *propose*; deterministic, unit-tested pipelines decide and act. A Cloudflare Worker + D1 control plane owns dispatch, locks, quota and the kill switch, and every run and decision is observable in Honeycomb through a board defined as code.
+
+- **Live control plane dashboard:** <https://factory-control-plane.nimeshjm.workers.dev/dashboard>
+- **Public Honeycomb board:** <https://ui.eu1.honeycomb.io/nimeshjm-personal/environments/software-factory/board/x9-5VWLvd5Ju>
+- **Example merged factory PRs:** <!-- TODO: add link to target repo merged factory PRs -->
+
+**Production snapshot (30 days to 2026-11-22):** 4 of 4 factory-authored PRs merged (1 dark, 3 lit with human approval), 3 of 4 on the first pass (one needed its `revise` round) | 7 of 8 Dependabot bumps merged by the factory | 577 agent runs, 94% successful | 2,264 model calls, about 75 a day against a 400/day quota | free-tier infrastructure <!-- Sources: GitHub PR search on the target (PRs); Honeycomb `factory` dataset, run.finished events (runs, calls). TODO: avg model calls per merged PR once pr.closed events reach Honeycomb (panels 15-pr-acceptance, 16-pr-outcomes are empty: no pr.closed events in this window). -->
+
+## Core architectural bets
+
+| Bet | How it is enforced |
+|---|---|
+| **Zero-trust agent sandbox: agents propose, pipelines act** | The agent process holds only `GEMINI_API_KEY` (plus a read-only Honeycomb query key for the incident responder and a Tavily key for builder/bug-fixer, read inside their tools and never exported to shell). It emits a schema-validated `proposal.json`; `scripts/apply-proposal.sh`, under a short-lived GitHub App token, is the only code that mutates GitHub, and it applies policy first. No agent holds a GitHub, Cloudflare or smoke-test token. |
+| **Deterministic control plane** | A Cloudflare Worker + D1 owns webhooks, a 15-minute pre-flight cron, per-subject locks, a daily model-call quota, per-subject exponential failure backoff (1 h, 3 h, then a 24 h `failure-cap`), backpressure on open factory PRs, and a kill switch (`/admin/pause`). Policy is pure, unit-tested code (`factory/policy/`, `control-plane/src/preflight.ts`). |
+| **Graduated autonomy and governance** | A PR is `autonomy:dark` (merges on green CI with all threads resolved) only if every changed path is inside the target's `dark_paths`; anything else is `autonomy:lit` and merges only on approval from a human named in the target's `amigos` (the Three Amigos contract). `risk:high` work stops at the plan until a human adds `plan:approved`. A reviewer's `request_changes` gets exactly one bounded `revise` attempt, then `needs-human`. |
+| **Unit economics and model resilience** | Runs on free tiers (Gemini, GitHub Actions, Cloudflare, Honeycomb). Tiered model routing (cheap / strong / spike keys), automatic fallback chains on daily-quota 429s and on unresponsive or stalled streams, and `BudgetGuard`, which forces a clean commit and proposal before a phase exhausts its token, turn or call budget. |
+
+## System flow
 
 | Role | Human owns | Agent executes |
 |---|---|---|
@@ -8,9 +25,7 @@ An autonomous software factory for one target repository, named in `factory.conf
 | Development (direction) | `.agents/*`, `factory.yml`, approves `autonomy:lit` PRs | Builder / bug-fixer: implement against the plan |
 | Testing (coherence) | "Questions for the human" in reviews, smoke checks | Reviewer, verifier, incident-responder |
 
-The boundary between the two trios, the gates that enforce it and where each lives in code are in `docs/three-amigos.md`. The humans are named per target in `factory.yml` `amigos`; the pipeline addresses them on plan and review comments and only a named amigo's approval merges a lit PR.
-
-## How it flows
+The boundary between the two trios, the gates that enforce it and where each lives in code are in [`docs/three-amigos.md`](docs/three-amigos.md).
 
 ```mermaid
 flowchart LR
@@ -56,8 +71,36 @@ flowchart LR
 
 Loops the cron and webhooks drive: triage on any unlabeled issue; builder on `status:backlog` features and enhancements and bug-fixer on backlog bugs, both posting the plan first and stopping there (`status:plan-review`) on the profile's `plan_review.hold_on` labels (`risk:high` by default) or when the plan needs a human, resuming with `implement` once a human adds `plan:approved`; reviewer on every factory PR event, on a human approval of any PR, and hourly on the oldest open Dependabot PR; verifier after each successful target deploy; incident responder once a day. The agent process holds only the Gemini key. Everything that touches GitHub runs in `apply-proposal.sh` under a freshly minted App token, and a PR merges without a human only when it is confined to the profile's `dark_paths` (or, with `dark_dependency_bumps: true`, is a Dependabot bump confined to `toolchain.dependency_files` and outside `lit_dependencies`), CI is green and every review thread is resolved.
 
-## Layout
+## Production lessons and hardening
 
+Each row is a failure observed in production and the structural fix it produced; details are in [`CONTRACTS.md`](CONTRACTS.md) and [`docs/history.md`](docs/history.md).
+
+| Incident / failure mode | Structural fix |
+|---|---|
+| **Run 125 (2026-11-12):** builder spent 42 calls and 921k tokens with checks passing, then died on `limit_total_tokens` with nothing pushed. | `BudgetGuard`: a soft nudge at 85% of the token, turn or call cap, a reserved `FINALIZE_PROMPT` invocation that commits and emits a proposal, plus `scripts/salvage-run.sh`, which pushes any half-done implement work to a `backup/*` branch. |
+| **2026-11-22:** the hourly Dependabot cron re-reviewed the same unchanged head 16 times (~50 calls, 1.2M tokens), every review discarded. | Deterministic `reuse-review` pre-check in `scripts/run-phases.sh`: an unchanged Dependabot head reuses the posted verdict with zero model calls. |
+| **Run 107 (2026-11-12):** six throttled calls, zero tokens, 23 minutes of job timeout burned on a hanging model. | `first_event_timeout_s` stall detection and `unresponsive_switch_after` fallback in `FactoryGeminiModel`: two consecutive unresponsive requests switch to the next model in the chain. |
+| **Before 2026-11-13:** GitHub answered 422 to `REQUEST_CHANGES` on factory-authored PRs, costing two failed attempts per review. | `post_review` routes factory-authored PRs straight to a `COMMENT` event, with the verdict on the body's first line. |
+| **2026-10-29, first spikes:** findings claimed HTTP statuses the agent never received, or were written from memory. | Spike findings are posted only if at least one real fetch happened and `check-findings` matches every claimed status to a fetch in that section; the pipeline appends its own `## Evidence` list of every fetch and search. |
+| **2026-10-29:** a 1.1 MB JSON response was clipped at 20k chars, so the agent reported a field as absent that sat at char 36k. | `fetch_url` reads JSON up to 2 MB and leads with an indented key tree of the whole body; every cut is marked `[clipped: ...]`, so "absent" is only claimed when the whole body was seen. |
+| **2026-10-28:** a research spike correctly proposed no file changes and failed at apply ("no commits ahead of main"): the only delivery path was a PR. | A spike delivers `findings_md` as an issue comment and closes the issue; `files == []` without findings still fails the run. |
+
+## Platform pattern and scaling
+
+**Decoupled target contract.** The target is named in `factory.config.json#target`. Each target describes itself in a `factory.yml` on its default branch: toolchain and checks, protected and `dark_paths`, risk rules, secrets the agent must never see, smoke checks, and its human `amigos`. The factory core reads only that profile, and `tests/test_no_target_leaks.py` fails CI if target-specific names appear in `factory/` or `agents/`. Onboarding a new repo is a copy of `templates/target/` plus a few secrets ([`docs/SETUP.md`](docs/SETUP.md#onboarding-a-target)).
+
+**Hard ceilings on cost and blast radius.** `limits.max_diff_lines` (300) and `max_diff_files` (8) cap what any PR can merge; `limits.max_context_chars` caps the context inlined into every prompt and fails the run before any model call when exceeded; `quota.daily_model_calls` (400) caps model spend across all agents, with each run reserving its calls before dispatch.
+
+**What breaks at 100x.**
+- `workflow_dispatch` on shared GitHub Actions runners adds queue latency and concurrency limits → dedicated ephemeral runners fed from a job queue.
+- One D1 ledger holds every lock, quota and decision → per-tenant sharding (a Durable Object or D1 database per target).
+- A static `factory.yml` per repo makes org-wide policy changes N pull requests → a central policy registry with per-repo overrides.
+- Free-tier per-model daily quotas cap throughput → provisioned throughput and multi-provider routing behind the same fallback chains.
+- All webhooks fan in to one Worker and one cron tick → an event bus with per-tenant backpressure and fair scheduling.
+
+## Repository layout
+
+```
 ```
 factory/           Python harness (guards, tools, policy, schemas)
 agents/            system prompts
@@ -65,80 +108,17 @@ scripts/           apply-proposal.sh and friends (see scripts/README.md)
 smoke/             Playwright smoke test driven by the target profile
 control-plane/     Cloudflare Worker
 templates/target/  starter factory.yml, .agents/*.md and onboarding for a new target
-examples/          worked example profiles (examples/fantasy-football)
+examples/          worked example profile of an onboarded target (see examples/README.md)
 .github/workflows/ agent-run.yml (reusable), one wrapper per agent, ci.yml
 factory.config.json, CONTRACTS.md
 ```
-
-## Onboarding a target
-
-Copy `templates/target/` into the target repo (`factory.yml`, `.agents/*.md`, `docs/product-spec.md`, issue and PR templates) and follow its `ONBOARDING.md`. `examples/fantasy-football/` is a filled-in profile for a Cloudflare Worker app. The profile is read from the default branch only; a missing or invalid `factory.yml` fails the run before any model call. Its `web.allowed_hosts` list (empty by default; `["*"]` = any public host) turns on web research for the builder and bug-fixer: it names the hosts `fetch_url` may read and enables spike delivery, and `web_search` also needs `TAVILY_API_KEY`.
-
-## Secrets and variables
-
-This repo, Actions secrets: `GEMINI_API_KEY`, `FACTORY_APP_ID`, `FACTORY_APP_PRIVATE_KEY` (the original PKCS#1 PEM), `HONEYCOMB_API_KEY` (ingest), `HONEYCOMB_QUERY_KEY` (read), `SMOKE_AUTH_TOKEN` (value for the header named by `smoke.version.auth_header`; optional), `FACTORY_TOKEN`, `TAVILY_API_KEY` (optional; Tavily free tier, 1,000 searches/month, no card; powers `web_search` for builder and bug-fixer).
-This repo, Actions variables: `FACTORY_URL` (control plane URL), `TARGET_BASE_URL` (deployed target, no trailing slash).
-Control plane (`wrangler secret put`): App id, App private key as **PKCS#8**, `GITHUB_WEBHOOK_SECRET`, `FACTORY_TOKEN`, `HONEYCOMB_API_KEY`, `ALERT_WEBHOOK_URL`.
-Keep Gemini on a dedicated Google Cloud project so AI Studio shows the factory's quota alone.
-
-## GitHub App
-
-1. Settings, Developer settings, GitHub Apps, New: name `factory.config.json#factory.app_slug` (currently `software-factory-agent-bot`), webhook off (the Worker receives repo webhooks separately).
-2. Repository permissions: Contents RW, Issues RW, Pull requests RW, Actions RW, Checks R, Metadata R. No Workflows permission.
-3. Generate a private key, install the App on the target repo and this repo, store the App id and key as secrets above.
-4. Worker key conversion (WebCrypto needs PKCS#8):
-   `openssl pkcs8 -topk8 -nocrypt -in software-factory-agent-bot.<date>.private-key.pem -out factory-bot.pkcs8.pem`
-5. Run `GH_TOKEN=<token> scripts/preflight-labels.sh` once to create the label set on the target.
-
-## Running wrappers manually
-
 ```
-gh workflow run triage.yml -f issue=35 -f dry_run=true
-gh workflow run builder.yml -f issue=12 -f dry_run=true          # research, plan, implement
-gh workflow run builder.yml -f issue=12 -f phase=plan -f dry_run=true
-gh workflow run bug-fixer.yml -f issue=14 -f dry_run=true
-gh workflow run reviewer.yml -f pr=40 -f dry_run=true
-gh workflow run verifier.yml -f pr=40 -f dry_run=true
-gh workflow run incident-responder.yml -f dry_run=true
-gh workflow run security-triage.yml -f dry_run=true
-```
-`dry_run=true` runs the model and prints the proposal; nothing is applied. Artifacts (`out/**`) are kept for one day.
 
-## Graduation order
+## Documentation
 
-All wrappers with `dry_run=true`, then `dry_run=false`, then control-plane dispatch. Order: triage, reviewer on Dependabot PRs, verifier, builder on a `risk:low size:S` issue, bug-fixer, incident responder (once product telemetry exists), security triage (needs the App's code scanning, Dependabot and secret scanning alerts read permissions). Dark merging stays limited to the profile's `dark_paths`; widen `factory.yml` only after five clean lit merges per path group.
-
-## Pause
-
-`curl -X POST -H "Authorization: Bearer $FACTORY_TOKEN" $FACTORY_URL/admin/pause` stops dispatch within one tick; `/admin/resume` restarts it. `GET /status` shows quota, in-flight runs and every decision of the last tick, including why each backlog issue was skipped; the fields and skip reasons are documented in `control-plane/README.md`.
-
-## Honeycomb board
-
-Board link: [factory](https://ui.eu1.honeycomb.io/nimeshjm-personal/environments/software-factory/board/x9-5VWLvd5Ju) (id in `docs/honeycomb/board.json`; re-running `scripts/honeycomb-board.sh` updates it in place and adds panels whose columns have appeared since).
-
-The board answers "are the agents' runs healthy?" from two Honeycomb datasets in the EU environment, last 7 days: `factory` (control-plane events: panels 01-07, 11 and 15-17) and `software-factory` (the harness's OTLP spans and span events: panels 08-10 and 12-14; the two cannot be joined), with `agent` and `dry_run` as board filters. It is code: `docs/honeycomb/derived_columns.json`, `docs/honeycomb/panels/*.json` (one saved query, annotation and panel each) and `docs/honeycomb/board.json`; the event fields are in `CONTRACTS.md` under "Honeycomb events".
-
-Apply it (owner only, never from Actions): `HONEYCOMB_CONFIG_KEY=<key> scripts/honeycomb-board.sh`, with a Honeycomb configuration key that has "Manage Queries and Columns" and "Manage Public Boards" (keep it out of the repo and out of Actions secrets). It first lists each dataset's columns and skips, with a warning naming the missing columns, every derived column, panel and board filter that needs a column that does not exist yet (Honeycomb only knows a column once an event has carried it). So the first run after a deploy gives a partial board, and `applied N of M panels` says which are missing; re-run later to fill it in (with no applicable panel it leaves the board alone). It then upserts the derived columns by alias, creates fresh queries and annotations, then creates the board (first run: commit the id it writes to `board.json`) or replaces it and deletes the previous annotations. `scripts/honeycomb-board.sh --dry-run` prints every request without a key and without calling the API.
-
-| Panel file | Shows | Reads |
-|---|---|---|
-| `00-runbook` | text: what to do when a panel is red, with the commands | nothing |
-| `01-success-rate` | AVG `run_ok` by `agent_d`, red line below 80% | `run.finished`: `agent_d`, `run_ok` (derived from `status`) |
-| `02-retry-loops` | subjects with more than one failed, timeout or lost run in 24 h | `run.finished`: `subject`, `agent_d`, `status` |
-| `03-run-outcomes` | runs per day by `agent_d`, stacked by `status` | `run.finished`: `agent_d`, `status` |
-| `04-where-runs-die` | table of failed, timeout, lost or denied runs with the stop reason, error and workflow link | `run.finished`: `run_id`, `agent_d`, `subject`, `phase`, `stop_reason`, `error`, `workflow_run_url`, `status` |
-| `05-quota-burn` | daily `model_calls` by `status`, red line at the daily quota of 400 | `run.finished`: `model_calls`, `status` |
-| `06-run-time` | P50/P95 run time, P95 queue time | `run.finished`: `duration_s`, `queue_s` |
-| `07-model-calls-vs-cap` | heatmap of model calls, daily max of calls/reservation, red line at 1.0 | `run.finished`: `model_calls`, `calls_ratio` (derived from `reserved_calls`) |
-| `08-model-reliability` | `chat` spans against `factory.model_retry` events per model | `software-factory`: `name`, `model_d` (derived from `gen_ai.request.model`, `factory.model_id`) |
-| `09-model-switches` | fallbacks by from, to, reason | span event `factory.model_switch`: `factory.model.from`, `.to`, `.reason` |
-| `10-model-retries` | throttles, stalls, 5xx per day | span event `factory.model_retry`: `factory.agent`, `factory.retry.reason`, `factory.model_id` |
-| `11-throttles` | throttles per agent | `run.finished`: `throttles` |
-| `12-tokens` | input and output tokens per agent, phase, model | model spans: `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `factory.agent`, `factory.phase`, `factory.model_id` |
-| `13-tool-guard-blocked` | denied tool calls | span event `tool_guard.blocked`: `factory.agent`, `rule` |
-| `14-guard-events` | other guard events | span events named `*.event`: `guard`, `rule` |
-| `15-pr-acceptance` | factory PRs closed in 30 days: merge rate and first-pass rate per agent | `pr.closed`: `agent`, `outcome` (derived `pr_merged`, `pr_first_pass`) |
-| `16-pr-outcomes` | PRs by outcome, autonomy label and agent | `pr.closed`: `outcome`, `autonomy`, `agent` |
-| `17-review-verdicts` | the reviewer's verdicts per day | `run.finished`: `agent_d`, `verdict` |
-
-Derived columns: `agent_d` on `factory` is `agent`, else parsed from `run_id`; `run_ok` on `factory` is 1 for a successful run; `pr_merged` and `pr_first_pass` on `factory` are 1/0 per `pr.closed` event (merged; merged without a revise round); `model_d` on `software-factory` is the model an event is about. The `agent_d` parse of `run_id` means events from before the `agent` field existed still group by agent.
+- [`docs/SETUP.md`](docs/SETUP.md): onboarding a target, secrets and variables, GitHub App, running wrappers, graduation, pause/resume, Honeycomb board
+- [`CONTRACTS.md`](CONTRACTS.md): schemas, policy rules, labels, telemetry fields, control-plane HTTP
+- [`docs/three-amigos.md`](docs/three-amigos.md): the human/agent boundary and the gates that enforce it
+- [`control-plane/README.md`](control-plane/README.md): Worker deployment, `GET /status` and dashboard fields
+- [`scripts/README.md`](scripts/README.md): the post-step scripts
+- [`docs/history.md`](docs/history.md): early build and graduation log
