@@ -169,6 +169,12 @@ describe("buildDashboard", () => {
       expect(card([failed({ error: "boom" })]).action).toMatch(/^Read the run log/);
     });
 
+    it("says the next tick retries an issue once its backoff is over", () => {
+      const c = card([failed({ dispatched_at: "2026-11-12T10:00:00Z", finished_at: "2026-11-12T10:01:25Z" })]);
+      expect(c.reason).toMatch(/: apply: .*\. The backoff is over, so the next tick retries it\.$/);
+      expect(c.reason).not.toContain("Nothing will retry it");
+    });
+
     it("failure cap sentence", () => {
       const runs = [0, 1, 2].map((n) => failed({ id: `f${n}`, dispatched_at: `2026-11-12T0${n + 6}:00:00Z`, finished_at: `2026-11-12T0${n + 6}:05:00Z` }));
       expect(card(runs).reason).toContain("Failure cap: no retry until 2026-11-13 06:00 UTC.");

@@ -204,6 +204,7 @@ function failedRunReason(r: RunRow, now: Date, recent: RecentRun[]): string {
   const back = /^(issue|revise):/.test(subject) ? failureBackoff(subject, recent, now) : null;
   if (back?.startsWith("retry-after:")) s += ` Retries automatically after ${back.slice(back.indexOf("T") + 1, -1)} UTC.`;
   else if (back?.startsWith("failure-cap:")) s += ` Failure cap: no retry until ${back.slice("failure-cap:".length, -1).replace("T", " ")} UTC.`;
+  else if (back === null && /^(issue|revise):/.test(subject)) s += " The backoff is over, so the next tick retries it.";
   else s += " Nothing will retry it.";
   return s;
 }
