@@ -4,7 +4,7 @@ An autonomous software factory that takes a target repository from issue to merg
 
 - **Live control plane dashboard:** <https://factory-control-plane.nimeshjm.workers.dev/dashboard>
 - **Public Honeycomb board:** <https://ui.eu1.honeycomb.io/nimeshjm-personal/environments/software-factory/board/x9-5VWLvd5Ju>
-- **Example merged factory PRs:** <!-- TODO: add link to target repo merged factory PRs -->
+- **Example merged factory PRs:** [#131 bug fix, Dream Team response shape](https://github.com/nimeshjm/fantasy-football/pull/131) · [#129 feature, revised once then approved](https://github.com/nimeshjm/fantasy-football/pull/129) · [#126 security fix, stack-trace exposure](https://github.com/nimeshjm/fantasy-football/pull/126) · [#105 docs change, merged lights-off](https://github.com/nimeshjm/fantasy-football/pull/105)
 
 **Production snapshot (30 days to 2026-11-22):** 4 of 4 factory-authored PRs merged (1 dark, 3 lit with human approval), 3 of 4 on the first pass (one needed its `revise` round) | 7 of 8 Dependabot bumps merged by the factory | 577 agent runs, 94% successful | 2,264 model calls, about 75 a day against a 400/day quota | free-tier infrastructure <!-- Sources: GitHub PR search on the target (PRs); Honeycomb `factory` dataset, run.finished events (runs, calls). TODO: avg model calls per merged PR once pr.closed events reach Honeycomb (panels 15-pr-acceptance, 16-pr-outcomes are empty: no pr.closed events in this window). -->
 
