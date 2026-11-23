@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_REFRESH_SECONDS, buildDashboard, clampWindow, dashboardHtml, nextTickAt, THEMES, type DashboardInput } from "../src/dashboard";
+import {
+  AUTO_REFRESH_SECONDS,
+  buildDashboard,
+  clampWindow,
+  dashboardHtml,
+  dashboardHtmlLegacy,
+  dashboardHtmlNext,
+  DEFAULT_UI,
+  NEXT_THEMES,
+  nextTickAt,
+  resolveUi,
+  THEMES,
+  type DashboardInput,
+} from "../src/dashboard";
 import type { GhIssue, GhPR } from "../src/github";
 import { candidateQueue, planTick, type TickState } from "../src/preflight";
 import { AGENT_SPECS } from "../src/config";
@@ -323,31 +336,57 @@ describe("helpers and html", () => {
     expect(nextTickAt(new Date("2026-11-12T13:40:00Z")).toISOString()).toBe("2026-11-12T13:45:00.000Z");
     expect(nextTickAt(new Date("2026-11-12T13:45:00Z")).toISOString()).toBe("2026-11-12T14:00:00.000Z");
   });
-  it("renders and escapes", () => {
+  it("resolveUi defaults to new and accepts old/new", () => {
+    expect(DEFAULT_UI).toBe("new");
+    expect(resolveUi(null)).toBe("new");
+    expect(resolveUi("new")).toBe("new");
+    expect(resolveUi("old")).toBe("old");
+    expect(resolveUi("bogus")).toBe("new");
+  });
+  it("renders and escapes in both New and Old UIs", () => {
     const d = buildDashboard(input({ openIssues: [issue(1, ["feature", "status:backlog"], { title: "<script>alert(1)</script>" })], paused: true }));
-    const html = dashboardHtml(d);
-    expect(html).toContain("<!doctype html>");
-    expect(html).toContain("PAUSED");
-    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-    expect(html).not.toContain("<script>alert");
-    expect(html).toContain("awaiting-risk");
-    expect(html).toContain("<b>To do:</b> Size issue #1: add the label risk:low");
-    expect(html).toContain("you: add risk:low or risk:high");
-    expect(html).toContain('href="?hours=24"');
+    for (const [ui, expectedWin, expectedToggle] of [
+      [undefined, 'href="?hours=24&ui=new"', 'href="?hours=48&ui=old"'],
+      ["old", 'href="?hours=24&ui=old"', 'href="?hours=48&ui=new"'],
+    ] as const) {
+      const html = dashboardHtml(d, ui);
+      expect(html).toContain("<!doctype html>");
+      expect(html).toContain("PAUSED");
+      expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+      expect(html).not.toContain("<script>alert");
+      expect(html).toContain("awaiting-risk");
+      expect(html).toContain("<b>To do:</b> Size issue #1: add the label risk:low");
+      expect(html).toContain("you: add risk:low or risk:high");
+      expect(html).toContain(expectedWin);
+      expect(html).toContain(expectedToggle);
+    }
   });
 });
 
-describe("html: refresh, theme and panels", () => {
-  const html = dashboardHtml(
-    buildDashboard(
-      input({
-        openIssues: [issue(1, ["feature", "status:backlog"], { title: "A very long title ".repeat(6) }), issue(2, ["feature", "status:backlog"])],
-        // overdue-run (waits) sorts before awaiting-risk (you) by severity; the page lists the human card first
-        runs: [run({ id: "stale", agent: "triage", subject: "issue:3", status: "started", dispatched_at: "2026-11-12T12:00:00Z" })],
-      }),
-    ),
+function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const [r, g, bl] = [1, 3, 5]
+      .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  return (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+}
+
+describe("html (legacy UI — ?ui=old): refresh, theme and panels", () => {
+  const doc = buildDashboard(
+    input({
+      openIssues: [issue(1, ["feature", "status:backlog"], { title: "A very long title ".repeat(6) }), issue(2, ["feature", "status:backlog"])],
+      // overdue-run (waits) sorts before awaiting-risk (you) by severity; the page lists the human card first
+      runs: [run({ id: "stale", agent: "triage", subject: "issue:3", status: "started", dispatched_at: "2026-11-12T12:00:00Z" })],
+    }),
   );
+  const html = dashboardHtml(doc, "old");
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+
+  it("matches dashboardHtmlLegacy", () => {
+    expect(html).toBe(dashboardHtmlLegacy(doc));
+  });
 
   it("auto-refresh: no meta refresh, a hidden-until-JS toggle, 60 s", () => {
     expect(AUTO_REFRESH_SECONDS).toBe(60);
@@ -357,7 +396,8 @@ describe("html: refresh, theme and panels", () => {
     expect(html).toContain('<span id="arc" class="dim"></span>');
     expect(html).not.toContain("Refreshes every 5 minutes");
     expect(html).toContain("reloads every 60 s while auto-refresh is ticked");
-    expect(html).toContain('<a href="?hours=24">');
+    expect(html).toContain('<a href="?hours=24&ui=old">');
+    expect(html).toContain('id="ui-toggle" href="?hours=48&ui=new"');
   });
 
   it("theme: light / dark / system select, data-theme overrides on the tokens, set before paint", () => {
@@ -399,13 +439,98 @@ describe("html: refresh, theme and panels", () => {
   });
 
   it("text and status colours pass WCAG AA on the background and cards in both themes", () => {
-    const lum = (hex: string) => {
-      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    };
-    const ratio = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
     for (const [name, t] of Object.entries(THEMES))
       for (const fg of ["fg", "fg2", "accent", "good", "warn", "bad", "mute"] as const)
-        for (const bg of ["bg", "card"] as const) expect([name, fg, bg, ratio(t[fg], t[bg]) >= 4.5]).toEqual([name, fg, bg, true]);
+        for (const bg of ["bg", "card"] as const) expect([name, fg, bg, contrastRatio(t[fg], t[bg]) >= 4.5]).toEqual([name, fg, bg, true]);
+  });
+});
+
+describe("html (new UI — default)", () => {
+  const doc = buildDashboard(
+    input({
+      openIssues: [issue(1, ["feature", "status:backlog"], { title: "A very long title ".repeat(6) }), issue(2, ["feature", "status:backlog"])],
+      runs: [
+        run({ id: "stale", agent: "triage", subject: "issue:3", status: "started", dispatched_at: "2026-11-12T12:00:00Z" }),
+        run({ id: "bad", agent: "builder", subject: "issue:4", status: "failed", dispatched_at: "2026-11-12T11:00:00Z", finished_at: "2026-11-12T11:10:00Z", model_calls: 12 }),
+      ],
+    }),
+  );
+  const html = dashboardHtml(doc);
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+
+  it("defaults to New UI when second argument is omitted", () => {
+    expect(html).toBe(dashboardHtmlNext(doc));
+  });
+
+  it("inline only: no external scripts or stylesheets, 2 valid scripts, safe storage access", () => {
+    expect(html).not.toMatch(/<script[^>]*\ssrc=|<link[^>]*stylesheet/);
+    expect(scripts).toHaveLength(2);
+    for (const body of scripts) expect(() => new Function(body)).not.toThrow();
+    const body = scripts.join("\n");
+    for (const k of ["localStorage", "sessionStorage"]) {
+      const total = body.split(k).length - 1;
+      const guarded = (body.match(new RegExp(`try\\{[^}]*${k}`, "g")) ?? []).length;
+      expect([k, total]).toEqual([k, guarded]);
+    }
+  });
+
+  it("boot script runs before <style> and handles theme, density, and ui storage keys", () => {
+    const styleIdx = html.indexOf("<style>");
+    expect(styleIdx).toBeGreaterThan(0);
+    const boot = scripts[0];
+    expect(html.indexOf(boot)).toBeLessThan(styleIdx);
+    expect(boot).toContain("theme");
+    expect(boot).toContain("density");
+    expect(boot).toContain("ui");
+    expect(html.indexOf("factory-dash:")).toBeLessThan(styleIdx);
+  });
+
+  it("controls: theme, density, auto-refresh, expand/collapse, and always-visible UI toggle", () => {
+    expect(html).toContain('<div class="ctl" id="ctl" hidden>');
+    expect(html).toContain('<select id="theme" aria-label="Colour theme"><option value="system">system</option><option value="light">light</option><option value="dark">dark</option></select>');
+    expect(html).toContain('<select id="density" aria-label="Layout density"><option value="comfortable">comfortable</option><option value="compact">compact</option></select>');
+    expect(html).toContain('<input type="checkbox" id="ar"> auto-refresh (60 s)');
+    expect(html).toContain('<button type="button" id="expand">Expand all</button>');
+    expect(html).toContain('<button type="button" id="collapse">Collapse all</button>');
+    expect(html).toContain('id="ui-toggle" href="?hours=48&ui=old"');
+  });
+
+  it("panels: native details with expected open/collapsed states", () => {
+    const open = (id: string) => new RegExp(`<details class="panel p\\d" id="${id}" open>`).test(html);
+    const exists = (id: string) => html.includes(`id="${id}"`);
+    for (const id of ["p-blocked", "p-flight", "p-next", "p-happened", "p-scheduled"]) expect([id, open(id)]).toEqual([id, true]);
+    for (const id of ["p-movement", "p-calls", "p-counts", "p-runs"]) expect([id, exists(id), open(id)]).toEqual([id, true, false]);
+    expect(html).toContain('<details id="p-decisions">');
+  });
+
+  it("enhancements: triage filter chips, copy buttons, SVG calls chart, runs filters, action callout, and human-first order", () => {
+    expect(html).toContain('data-filter="all"');
+    expect(html).toContain('data-filter="human"');
+    expect(html).toContain('data-filter="waits"');
+    expect(html).toContain('class="copy-btn" data-copy="');
+    expect(html).toContain('class="calls-svg"');
+    expect(html).toContain('data-run-filter="failed"');
+    expect(html).toContain('<div class="callout">');
+    expect(html.indexOf('<span class="blk-kind">awaiting-risk</span>')).toBeGreaterThan(0);
+    expect(html.indexOf('<span class="blk-kind">awaiting-risk</span>')).toBeLessThan(html.indexOf('<span class="blk-kind">overdue-run</span>'));
+  });
+
+  it("NEXT_THEMES pass WCAG AA (>= 4.5:1) on bg/card/elev and tinted status badges", () => {
+    for (const [name, t] of Object.entries(NEXT_THEMES)) {
+      for (const fg of ["fg", "fg2", "accent", "good", "warn", "bad", "mute"] as const) {
+        for (const bg of ["bg", "card", "elev"] as const) {
+          expect([name, fg, bg, contrastRatio(t[fg], t[bg]) >= 4.5]).toEqual([name, fg, bg, true]);
+        }
+      }
+      for (const [fg, bg] of [
+        ["good", "goodBg"],
+        ["warn", "warnBg"],
+        ["bad", "badBg"],
+        ["mute", "muteBg"],
+        ["accent", "accentBg"],
+      ] as const) {
+        expect([name, fg, bg, contrastRatio(t[fg], t[bg]) >= 4.5]).toEqual([name, fg, bg, true]);
+      }
+    }
   });
 });
