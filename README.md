@@ -101,7 +101,6 @@ Each row is a failure observed in production and the structural fix it produced;
 ## Repository layout
 
 ```
-```
 factory/           Python harness (guards, tools, policy, schemas)
 agents/            system prompts
 scripts/           apply-proposal.sh and friends (see scripts/README.md)
@@ -111,7 +110,6 @@ templates/target/  starter factory.yml, .agents/*.md and onboarding for a new ta
 examples/          worked example profile of an onboarded target (see examples/README.md)
 .github/workflows/ agent-run.yml (reusable), one wrapper per agent, ci.yml
 factory.config.json, CONTRACTS.md
-```
 ```
 
 ## Documentation
