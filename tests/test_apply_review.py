@@ -79,13 +79,19 @@ def test_fallback_still_runs(tmp_path):
 REVIEW_STUB = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >>"$STUB_LOG"
 if [ "$1 $2" = "pr view" ]; then echo abc123; fi
-if [ "$1" = api ]; then echo '[]'; fi
+if [ "$1" = api ]; then
+  case "$*" in
+    *issues/*/comments*) if [ "$2" != -X ]; then cat "${STUB_COMMENTS:-/dev/null}" 2>/dev/null || echo '[]'; fi ;;
+    *) echo '[]' ;;
+  esac
+fi
 exit 0
 """
 
 
 def run_apply_review(tmp_path, labels, author="app/software-factory-agent-bot", head="feat/125-x",
-                     verdict="request_changes", ci_fix=False):
+                     verdict="request_changes", ci_fix=False,
+                     decision=None, comments=None):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     (bindir / "gh").write_text(REVIEW_STUB)
@@ -95,21 +101,25 @@ def run_apply_review(tmp_path, labels, author="app/software-factory-agent-bot", 
     prop.write_text(json.dumps({"verdict": verdict, "ci_fix": {"attempted": ci_fix}}))
     fresh = tmp_path / "fresh.json"
     fresh.write_text(json.dumps({"author": author, "headRefName": head, "labels": labels, "body": ""}))
+    decision = decision or {"merge": False, "reasons": []}
+    (tmp_path / "decision.json").write_text(json.dumps(decision))
+    (tmp_path / "comments.json").write_text(json.dumps(comments or []))
     # No `-u`: apply_review expands an empty array, which bash 3.2 (macOS) reports as unbound.
     snippet = f"""
 set -eo pipefail
 source scripts/lib.sh
 TMP="{tmp_path}/tmp"; mkdir -p "$TMP"; PR=7; OUT_DIR="{tmp_path}"
-eval "$(sed -n '/^apply_review() {{/,/^}}/p' scripts/apply-proposal.sh)"
+eval "$(sed -n '/^apply_review() {{/,/^}}/p;/^upsert_comment_if_changed() {{/,/^}}/p' scripts/apply-proposal.sh)"
+MERGE_BLOCKED_MARKER='<!-- factory:merge-blocked -->'
 proposal_path() {{ printf '%s' "{prop}"; }}
 validate_and_guard() {{ :; }}
 post_review() {{ :; }}
 fetch_pr_json() {{ cat "{fresh}"; }}
-uvpy() {{ case "$3" in classify-autonomy) echo lit ;; *) echo '{{"merge": false, "reasons": []}}' ;; esac; }}
+uvpy() {{ case "$3" in classify-autonomy) echo lit ;; *) cat "{tmp_path}/decision.json" ;; esac; }}
 apply_review
 """
     env = {"PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}", "HOME": os.environ["HOME"],
-           "STUB_LOG": str(tmp_path / "calls.log"), "TARGET_REPO": "o/r", "GH_RETRY_BASE": "0",
+           "STUB_LOG": str(tmp_path / "calls.log"), "STUB_COMMENTS": str(tmp_path / "comments.json"), "TARGET_REPO": "o/r", "GH_RETRY_BASE": "0",
            "INPUTS_DIR": str(tmp_path), "CONFIG": str(ROOT / "factory.config.json")}
     p = subprocess.run(["bash", "-c", snippet], cwd=ROOT, env=env, capture_output=True, text=True)
     return p, (tmp_path / "calls.log").read_text().splitlines()
@@ -140,3 +150,52 @@ def test_review_leaves_human_prs_alone(tmp_path):
     p, calls = run_apply_review(tmp_path, [], author="alice")
     assert p.returncode == 0, p.stderr
     assert not any("revise:requested" in c for c in calls)
+
+
+BLOCKED = {"merge": False, "approved": True, "reasons": ["diff too large", "ci not green"]}
+BODY = ("<!-- factory:merge-blocked -->\n**Approved, but the merge rules block it.**\n\n"
+        "- diff too large\n- ci not green\n\n"
+        "The reviewer re-checks on the next approval, push or CI run. "
+        "Fix the blockers, or merge by hand if you accept them.\n")
+
+
+def test_approved_but_blocked_labels_and_comments(tmp_path):
+    p, calls = run_apply_review(tmp_path, [], author="alice", decision=BLOCKED)
+    assert p.returncode == 0, p.stderr
+    assert any("--add-label merge:blocked" in c for c in calls)
+    assert any(c.startswith("api -X POST repos/o/r/issues/7/comments") for c in calls)
+
+
+def test_blocked_comment_is_not_patched_when_unchanged(tmp_path):
+    existing = [{"id": 5, "body": BODY, "user": {"login": "bot[bot]"}}]
+    p, calls = run_apply_review(tmp_path, ["merge:blocked"], author="alice", decision=BLOCKED, comments=existing)
+    assert p.returncode == 0, p.stderr
+    assert not any("-X PATCH" in c or "-X POST" in c for c in calls)
+
+
+def test_blocked_comment_is_patched_when_reasons_change(tmp_path):
+    existing = [{"id": 5, "body": BODY.replace("- ci not green\n", ""), "user": {"login": "bot[bot]"}}]
+    p, calls = run_apply_review(tmp_path, ["merge:blocked"], author="alice", decision=BLOCKED, comments=existing)
+    assert p.returncode == 0, p.stderr
+    assert any(c.startswith("api -X PATCH repos/o/r/issues/comments/5") for c in calls)
+
+
+def test_not_approved_clears_merge_blocked(tmp_path):
+    p, calls = run_apply_review(tmp_path, ["merge:blocked"], author="alice",
+                                decision={"merge": False, "approved": False, "reasons": ["x"]})
+    assert p.returncode == 0, p.stderr
+    assert any("--remove-label merge:blocked" in c for c in calls)
+    assert not any("issues/7/comments" in c for c in calls)
+
+
+def test_missing_approved_is_false(tmp_path):
+    p, calls = run_apply_review(tmp_path, [], author="alice")
+    assert not any("merge:blocked" in c for c in calls)
+
+
+def test_merge_clears_merge_blocked(tmp_path):
+    p, calls = run_apply_review(tmp_path, ["merge:blocked"], author="alice",
+                                decision={"merge": True, "approved": True, "reasons": []})
+    assert p.returncode == 0, p.stderr
+    assert any("--remove-label merge:blocked" in c for c in calls)
+    assert any(c.startswith("pr merge 7") for c in calls)

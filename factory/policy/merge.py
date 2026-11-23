@@ -10,12 +10,18 @@ from .autonomy import classify_autonomy
 
 GREEN = {"success", "neutral", "skipped"}
 CRON_TRIGGERS = {"cron", "schedule"}
+# Generated lockfiles (matched by basename) do not count toward limits.max_diff_lines; they still count as files.
+LOCKFILES = frozenset({
+    "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock",
+    "Cargo.lock", "poetry.lock", "uv.lock", "Pipfile.lock", "Gemfile.lock", "composer.lock", "go.sum",
+})
 
 
 @dataclass
 class MergeDecision:
     merge: bool
     reasons: list[str] = field(default_factory=list)  # blockers when merge is False, basis when True
+    approved: bool = False  # dark, or a qualifying human APPROVED review, whatever else blocks the merge
 
 
 def _bumped_deps(pr: dict[str, Any]) -> list[str]:
@@ -73,9 +79,10 @@ def merge_policy(pr: dict[str, Any], factory_cfg: dict[str, Any], plan_files: li
             if extra:
                 blockers.append(f"files outside plan: {', '.join(extra[:5])}")
 
-    lines = sum(int(f.get("additions", 0)) + int(f.get("deletions", 0)) for f in files)
+    lines = sum(int(f.get("additions", 0)) + int(f.get("deletions", 0)) for f in files
+                if f["path"].rsplit("/", 1)[-1] not in LOCKFILES)
     if lines > max_lines:
-        blockers.append(f"diff too large: {lines} lines > {max_lines}")
+        blockers.append(f"diff too large: {lines} lines > {max_lines} (lockfiles excluded)")
     if len(files) > max_files:
         blockers.append(f"too many files: {len(files)} > {max_files}")
 
@@ -89,10 +96,11 @@ def merge_policy(pr: dict[str, Any], factory_cfg: dict[str, Any], plan_files: li
         and (not amigos or str(r.get("author", "")).lower() in amigos)
         for r in pr.get("reviews") or []
     )
-    if autonomy != "dark" and not human_approved:
+    approved = autonomy == "dark" or human_approved
+    if not approved:
         blockers.append("autonomy:lit requires an APPROVED review from a named amigo" if amigos
                         else "autonomy:lit requires a human APPROVED review")
 
     if blockers:
-        return MergeDecision(False, blockers)
-    return MergeDecision(True, ["autonomy:dark" if autonomy == "dark" else "human approved"])
+        return MergeDecision(False, blockers, approved)
+    return MergeDecision(True, ["autonomy:dark" if autonomy == "dark" else "human approved"], approved)

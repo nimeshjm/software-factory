@@ -147,6 +147,15 @@ export async function listOpenPRs(env: Env, repo: string, maxPages = 3): Promise
   }));
 }
 
+/** The `- ` lines of the newest `<!-- factory:merge-blocked -->` comment on a PR, or null when there is none. */
+export async function listMergeBlockers(env: Env, repo: string, n: number): Promise<string[] | null> {
+  const comments = await paginate<any>(env, repo, `/repos/${repo}/issues/${n}/comments?per_page=100`, 3);
+  const mine = comments.filter((c) => typeof c.body === "string" && c.body.includes("<!-- factory:merge-blocked -->"));
+  if (!mine.length) return null;
+  const body: string = mine[mine.length - 1].body;
+  return body.split(/\r?\n/).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim());
+}
+
 export interface GhIssue {
   number: number;
   title: string;

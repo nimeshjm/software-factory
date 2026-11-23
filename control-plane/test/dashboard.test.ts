@@ -26,6 +26,32 @@ const input = (o: Partial<DashboardInput> = {}): DashboardInput => ({
   runs: [], openIssues: [], openPRs: [], updatedSince: [], targetRepo: REPO, githubError: null, ...o,
 });
 
+describe("merge-blocked card", () => {
+  const blocked = (o: Partial<DashboardInput>) => buildDashboard(input(o)).blocked;
+  it("replaces lit-pr, joins blockers, and sorts before lit-pr", () => {
+    const b = blocked({
+      openPRs: [pr(88, "dependabot/x", { labels: ["autonomy:lit"] }), pr(136, "feat/1-x", { labels: ["autonomy:lit", "merge:blocked"] })],
+      mergeBlockers: { 136: ["CI not green", "diff too large: 400 lines > 300 (lockfiles excluded)"] },
+    });
+    expect(b.map((x) => [x.kind, x.subject, x.needs_human])).toEqual([["merge-blocked", "pr:136", true], ["lit-pr", "pr:88", true]]);
+    expect(b[0].reason).toBe("Approved, but the merge rules block it: CI not green; diff too large: 400 lines > 300 (lockfiles excluded).");
+    expect(b[0].action).toBe(`Fix the blockers, or merge it by hand if you accept them: gh pr merge 136 -R ${REPO} --squash`);
+    expect(b[0].todo).toBe("Read why the merge is blocked on PR #136. Fix it, or merge it yourself if the blockers are acceptable.");
+    expect(b[0].url).toBe(`https://github.com/${REPO}/pull/136`);
+  });
+  it("falls back when blockers are missing, null or empty", () => {
+    const fallback = "Approved, but the merge rules block it (see the factory comment on the PR).";
+    const prs = [pr(1, "feat/1-a", { labels: ["merge:blocked"] })];
+    expect(blocked({ openPRs: prs })[0].reason).toBe(fallback);
+    expect(blocked({ openPRs: prs, mergeBlockers: { 1: null } })[0].reason).toBe(fallback);
+    expect(blocked({ openPRs: prs, mergeBlockers: { 1: [] } })[0].reason).toBe(fallback);
+  });
+  it("needs-human wins over merge:blocked", () => {
+    const b = blocked({ openPRs: [pr(2, "feat/2-b", { labels: ["merge:blocked", "needs-human"] })] });
+    expect(b.map((x) => x.kind)).toEqual(["needs-human-pr"]);
+  });
+});
+
 describe("buildDashboard", () => {
   it("quota, window and empty state", () => {
     const d = buildDashboard(input());

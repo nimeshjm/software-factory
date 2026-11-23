@@ -369,7 +369,8 @@
       "spike",
       "security",
       "revise:requested",
-      "revise:attempted"
+      "revise:attempted",
+      "merge:blocked"
     ]
   }
 }

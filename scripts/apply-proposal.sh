@@ -15,6 +15,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 FINDINGS_MARKER='<!-- factory:findings -->'
+MERGE_BLOCKED_MARKER='<!-- factory:merge-blocked -->'
 
 uvpy() { uv run --frozen python "$@"; }
 
@@ -56,6 +57,24 @@ upsert_comment() {
     gh api -X PATCH "repos/$TARGET_REPO/issues/comments/$id" -F "body=@$bodyfile" >/dev/null
   else
     gh api -X POST "repos/$TARGET_REPO/issues/$num/comments" -F "body=@$bodyfile" >/dev/null
+  fi
+}
+
+# upsert_comment_if_changed <issue|pr number> <marker> <bodyfile>: like upsert_comment, but an existing
+# comment is PATCHed only when its body differs (compared without trailing whitespace), so reruns add no noise.
+upsert_comment_if_changed() {
+  local num=$1 marker=$2 bodyfile=$3 found id old new
+  found="$(gh api --paginate "repos/$TARGET_REPO/issues/$num/comments" \
+    | jq -s -c --arg m "$marker" '[.[][] | select((.body | startswith($m)) and (.user.login | endswith("[bot]")))] | last // {}')"
+  id="$(jq -r '.id // empty' <<<"$found")"
+  if [ -z "$id" ]; then
+    gh api -X POST "repos/$TARGET_REPO/issues/$num/comments" -F "body=@$bodyfile" >/dev/null
+    return 0
+  fi
+  old="$(jq -r '.body | gsub("\\s+$"; "")' <<<"$found")"
+  new="$(jq -Rs 'gsub("\\s+$"; "")' "$bodyfile" | jq -r '.')"
+  if [ "$old" != "$new" ]; then
+    gh api -X PATCH "repos/$TARGET_REPO/issues/comments/$id" -F "body=@$bodyfile" >/dev/null
   fi
 }
 
@@ -345,6 +364,21 @@ apply_review() {
   decision="$(uvpy -m factory.policy merge-policy --pr "$fresh" --factory "$INPUTS_DIR/factory.json" "${pf_args[@]}" --trigger "$trigger")"
   merge="$(jq -r '.merge' <<<"$decision")"
   log "merge-policy: $(jq -c '.' <<<"$decision")"
+
+  local has_blocked=false
+  if jq -e 'any(.labels[]; . == "merge:blocked")' "$fresh" >/dev/null; then has_blocked=true; fi
+  if [ "$merge" != "true" ] && [ "$(jq -r '.approved // false' <<<"$decision")" = "true" ]; then
+    # Approved but blocked: tell the human on the PR (label for the dashboard, one comment listing the blockers).
+    edit_labels pr "$PR" "merge:blocked" "" || warn "could not add merge:blocked"
+    { printf '%s\n**Approved, but the merge rules block it.**\n\n' "$MERGE_BLOCKED_MARKER"
+      jq -r '(.reasons // [])[] | "- \(.)"' <<<"$decision"
+      printf '\nThe reviewer re-checks on the next approval, push or CI run. Fix the blockers, or merge by hand if you accept them.\n'
+    } | sanitize >"$TMP/merge-blocked.md"
+    upsert_comment_if_changed "$PR" "$MERGE_BLOCKED_MARKER" "$TMP/merge-blocked.md" \
+      || warn "could not upsert the merge-blocked comment"
+  elif [ "$has_blocked" = true ]; then
+    edit_labels pr "$PR" "" "merge:blocked" || warn "could not remove merge:blocked"
+  fi
 
   if [ "$merge" = "true" ]; then
     gh pr merge "$PR" --repo "$TARGET_REPO" --squash --delete-branch

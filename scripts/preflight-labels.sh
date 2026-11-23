@@ -9,7 +9,7 @@ jq -r '
     elif . == "bug" then "d73a4a" elif startswith("risk:") then "fbca04" elif startswith("size:") then "c5def5"
     elif . == "autonomy:dark" then "24292f" elif startswith("autonomy:") then "5319e7"
     elif . == "needs-human" then "b60205" elif . == "plan:approved" then "0e8a16"
-    elif . == "ci-fix:attempted" then "e99695" elif startswith("revise:") then "c2e0c6" elif . == "factory:accepted" then "0e8a16"
+    elif . == "ci-fix:attempted" then "e99695" elif startswith("revise:") then "c2e0c6" elif . == "factory:accepted" then "0e8a16" elif . == "merge:blocked" then "d93f0b"
     elif . == "security" then "b60205" elif . == "epic" then "3e4b9e" elif . == "spike" then "bfd4f2" else "ededed" end;
   def desc: {
     "status:backlog": "Ready for the factory to pick up", "status:plan-review": "Plan posted, waiting for plan:approved",
@@ -25,6 +25,7 @@ jq -r '
     "factory:accepted": "Author trusted by the factory",
     "revise:requested": "Reviewer asked for changes; the factory gets one revise run",
     "revise:attempted": "The factory'"'"'s one revise run happened",
+    "merge:blocked": "Approved, but the merge rules block it; see the factory comment",
     "security": "Raised from a code scanning, Dependabot or secret scanning alert",
     "spike": "Investigation only: findings are posted as a comment, no PR"
   }[.] // "";

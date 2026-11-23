@@ -41,6 +41,47 @@ def test_merge_blockers(factory_cfg):
     assert "too many files" in blocked(_pr(files=big), plan=[f["path"] for f in big])
     assert "diff too large" in blocked(_pr(files=[{"path": "docs/a.md", "additions": 300, "deletions": 1}]))
     assert "draft" in blocked(_pr(isDraft=True))
+    assert "diff too large: 301 lines > 300 (lockfiles excluded)" in blocked(
+        _pr(files=[{"path": "docs/a.md", "additions": 300, "deletions": 1}]))
+
+
+def _lock_files(lock="package-lock.json", adds=250, dels=100):
+    return [{"path": "package.json", "additions": 1, "deletions": 1},
+            {"path": lock, "additions": adds, "deletions": dels}]
+
+
+def test_merge_lockfiles_excluded_from_line_count(factory_cfg):
+    def run(files, cfg=factory_cfg, **kw):
+        plan = [f["path"] for f in files]
+        return merge_policy(_pr(files=files, reviews=[{"author": "maintainer", "state": "APPROVED"}], **kw),
+                            cfg, plan, False, "pull_request")
+
+    d = run(_lock_files())
+    assert d.merge, d.reasons
+    d = run(_lock_files("web/yarn.lock"))
+    assert d.merge, d.reasons
+    # a non-lockfile of the same size is still blocked, with the new text
+    d = run(_lock_files("src/data.json"))
+    assert not d.merge and "diff too large: 352 lines > 300 (lockfiles excluded)" in d.reasons
+    # a name that merely ends in a lockfile name is not a lockfile
+    assert not run(_lock_files("my-package-lock.json")).merge
+    # lockfiles still count toward max_diff_files
+    many = [{"path": f"sub{i}/package-lock.json", "additions": 500, "deletions": 0} for i in range(9)]
+    d = run(many)
+    assert not d.merge and d.reasons == ["too many files: 9 > 8"]
+
+
+def test_merge_approved_field(factory_cfg):
+    src = [{"path": "src/index.py", "additions": 400, "deletions": 0}]
+    review = [{"author": "maintainer", "state": "APPROVED"}]
+    d = merge_policy(_pr(files=src, reviews=review), factory_cfg, ["src/index.py"], False, "pull_request")
+    assert not d.merge and d.approved  # approved, blocked by size
+    d = merge_policy(_pr(files=src), factory_cfg, ["src/index.py"], False, "pull_request")
+    assert not d.merge and not d.approved
+    d = merge_policy(_pr(), factory_cfg, ["docs/a.md"], False, "pull_request")
+    assert d.merge and d.approved
+    d = merge_policy(_pr(isDraft=True), factory_cfg, ["docs/a.md"], False, "pull_request")
+    assert not d.merge and d.approved  # dark
 
 
 def test_merge_lit_needs_human(factory_cfg):
@@ -102,6 +143,7 @@ def test_policy_cli_and_validate_cli(tmp_path, capsys):
                         "--plan-files", str(tmp_path / "plan.json"), "--trigger", "webhook"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["merge"] is True, out
+    assert list(out) == ["merge", "reasons", "approved"] and out["approved"] is True
 
     good = {"issues": [], "new_issues": [], "summary": "ok"}
     (tmp_path / "p.json").write_text(json.dumps(good))

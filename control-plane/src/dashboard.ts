@@ -2,7 +2,7 @@
 // buildDashboard and dashboardHtml are pure (unit-tested); handleDashboard does the I/O.
 import { agentSpec, AGENT_SPECS, dailyQuota, maxOpenFactoryPrs } from "./config";
 import type { GhIssue, GhPR } from "./github";
-import { listIssues, listOpenPRs } from "./github";
+import { listIssues, listMergeBlockers, listOpenPRs } from "./github";
 import {
   BUG_TYPES,
   BUILDER_TYPES,
@@ -45,6 +45,8 @@ export interface DashboardInput {
   updatedSince: GhIssue[] | null;
   targetRepo: string;
   githubError: string | null;
+  /** Blockers parsed from each `merge:blocked` PR's factory comment, by PR number; null or missing when unreadable. */
+  mergeBlockers?: Record<number, string[] | null>;
 }
 
 export type BlockKind =
@@ -56,6 +58,7 @@ export type BlockKind =
   | "failure-cap"
   | "plan-review"
   | "needs-human"
+  | "merge-blocked"
   | "awaiting-risk"
   | "author-not-trusted"
   | "blocked-by"
@@ -68,11 +71,11 @@ export type BlockKind =
 
 const BLOCK_ORDER: BlockKind[] = [
   "paused", "overdue-run", "stuck-in-progress", "orphan-in-review", "failed-run", "failure-cap", "plan-review", "needs-human",
-  "awaiting-risk", "author-not-trusted", "blocked-by", "backoff", "lit-pr", "needs-human-pr", "bugs-first", "backpressure", "quota",
+  "merge-blocked", "awaiting-risk", "author-not-trusted", "blocked-by", "backoff", "lit-pr", "needs-human-pr", "bugs-first", "backpressure", "quota",
 ];
 /** Kinds a human has to act on; the rest clear on their own (a dependency closes, the day rolls over). */
 const HUMAN_KINDS = new Set<BlockKind>([
-  "paused", "stuck-in-progress", "orphan-in-review", "failed-run", "failure-cap", "plan-review", "needs-human", "awaiting-risk",
+  "paused", "stuck-in-progress", "orphan-in-review", "failed-run", "failure-cap", "plan-review", "needs-human", "merge-blocked", "awaiting-risk",
   "author-not-trusted", "lit-pr", "needs-human-pr", "backpressure",
 ]);
 
@@ -222,6 +225,7 @@ export function humanTodo(kind: BlockKind, subject: string): string {
     case "failure-cap": return `Read why the last runs on ${ref} failed and fix the cause, then re-run it by hand or wait for the cap to lift.`;
     case "plan-review": return `Read the plan comment on ${ref}. If it looks right, add the label plan:approved.`;
     case "needs-human": return `Do what the factory asked for in the comments on ${ref}, then remove the label needs-human.`;
+    case "merge-blocked": return `Read why the merge is blocked on ${ref}. Fix it, or merge it yourself if the blockers are acceptable.`;
     case "awaiting-risk": return `Size ${ref}: add the label risk:low to let the builder go ahead, or risk:high to hold its plan for your review.`;
     case "author-not-trusted": return `Read ${ref}. If the factory should work on it, add the label factory:accepted.`;
     case "blocked-by": return "Nothing to do: it starts when the issues it depends on close.";
@@ -451,6 +455,15 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
           ? "revise attempted; a human must take over (see the factory comments on the PR)"
           : "The pipeline could not handle this PR (needs-human); the reviewer skips it.",
         action: `Fix it by hand, then gh pr edit ${p.number} -R ${targetRepo} --remove-label needs-human`, url,
+      });
+    } else if (p.labels.includes("merge:blocked")) {
+      const bl = input.mergeBlockers?.[p.number];
+      add({
+        kind: "merge-blocked", subject: `pr:${p.number}`, title: p.title,
+        reason: bl?.length
+          ? `Approved, but the merge rules block it: ${bl.join("; ")}.`
+          : "Approved, but the merge rules block it (see the factory comment on the PR).",
+        action: `Fix the blockers, or merge it by hand if you accept them: gh pr merge ${p.number} -R ${targetRepo} --squash`, url,
       });
     } else if (p.labels.includes("autonomy:lit")) {
       add({
@@ -783,9 +796,16 @@ export async function handleDashboard(req: Request, env: Env): Promise<Response>
   } catch (e) {
     githubError = e instanceof Error ? e.message : String(e);
   }
+  let mergeBlockers: Record<number, string[] | null> = {};
+  if (openPRs) {
+    // One comments call per merge:blocked PR (rare); a failed read falls back to the generic reason.
+    const labelled = openPRs.filter((p) => p.labels.includes("merge:blocked") && !p.labels.includes("needs-human"));
+    const got = await Promise.all(labelled.map((p) => listMergeBlockers(env, env.TARGET_REPO, p.number).catch(() => null)));
+    mergeBlockers = Object.fromEntries(labelled.map((p, i) => [p.number, got[i]]));
+  }
   const doc = buildDashboard({
     now, windowHours, paused, lastTick: lt?.value ?? null, dailyQuota: dailyQuota(env), maxOpenFactoryPrs: maxOpenFactoryPrs(env),
-    runs: runs.results ?? [], openIssues, openPRs, updatedSince, targetRepo: env.TARGET_REPO, githubError,
+    runs: runs.results ?? [], openIssues, openPRs, updatedSince, targetRepo: env.TARGET_REPO, githubError, mergeBlockers,
   });
   const wantsHtml = url.searchParams.get("format") !== "json" && (req.headers.get("accept") ?? "").includes("text/html");
   const headers = { "cache-control": "public, max-age=60" };
