@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDashboard, clampWindow, dashboardHtml, nextTickAt, type DashboardInput } from "../src/dashboard";
+import { AUTO_REFRESH_SECONDS, buildDashboard, clampWindow, dashboardHtml, nextTickAt, THEMES, type DashboardInput } from "../src/dashboard";
 import type { GhIssue, GhPR } from "../src/github";
 import { candidateQueue, planTick, type TickState } from "../src/preflight";
 import { AGENT_SPECS } from "../src/config";
@@ -334,5 +334,78 @@ describe("helpers and html", () => {
     expect(html).toContain("<b>To do:</b> Size issue #1: add the label risk:low");
     expect(html).toContain("you: add risk:low or risk:high");
     expect(html).toContain('href="?hours=24"');
+  });
+});
+
+describe("html: refresh, theme and panels", () => {
+  const html = dashboardHtml(
+    buildDashboard(
+      input({
+        openIssues: [issue(1, ["feature", "status:backlog"], { title: "A very long title ".repeat(6) }), issue(2, ["feature", "status:backlog"])],
+        // overdue-run (waits) sorts before awaiting-risk (you) by severity; the page lists the human card first
+        runs: [run({ id: "stale", agent: "triage", subject: "issue:3", status: "started", dispatched_at: "2026-11-12T12:00:00Z" })],
+      }),
+    ),
+  );
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+
+  it("auto-refresh: no meta refresh, a hidden-until-JS toggle, 60 s", () => {
+    expect(AUTO_REFRESH_SECONDS).toBe(60);
+    expect(html).not.toContain("http-equiv");
+    expect(html).toContain('<div class="ctl" id="ctl" hidden>');
+    expect(html).toContain('<input type="checkbox" id="ar"> auto-refresh (60 s)');
+    expect(html).toContain('<span id="arc" class="dim"></span>');
+    expect(html).not.toContain("Refreshes every 5 minutes");
+    expect(html).toContain("reloads every 60 s while auto-refresh is ticked");
+    expect(html).toContain('<a href="?hours=24">');
+  });
+
+  it("theme: light / dark / system select, data-theme overrides on the tokens, set before paint", () => {
+    expect(html).toContain('<select id="theme" aria-label="Colour theme"><option value="system">system</option><option value="light">light</option><option value="dark">dark</option></select>');
+    expect(html).toContain('@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#1a1a19');
+    expect(html).toContain(':root[data-theme="dark"]{color-scheme:dark;--bg:#1a1a19');
+    expect(html.indexOf("factory-dash:theme")).toBeLessThan(html.indexOf("<style>"));
+  });
+
+  it("inline only: no external scripts or stylesheets, and the scripts parse", () => {
+    expect(html).not.toMatch(/<script[^>]*\ssrc=|<link[^>]*stylesheet/);
+    expect(scripts).toHaveLength(2);
+    for (const body of scripts) expect(() => new Function(body)).not.toThrow();
+    for (const k of ["localStorage", "sessionStorage"]) {
+      // every storage access sits inside a try block
+      const body = scripts.join("\n");
+      expect(body.split(k).length - 1).toBe((body.match(new RegExp(`try\\{[^}]*${k}`, "g")) ?? []).length);
+    }
+  });
+
+  it("panels: native details with counts, Blocked and In flight open, Happened sub-tables collapsed", () => {
+    const open = (id: string) => new RegExp(`<details class="panel p\\d" id="${id}" open>`).test(html);
+    const exists = (id: string) => html.includes(`id="${id}"`);
+    for (const id of ["p-blocked", "p-flight", "p-next", "p-happened", "p-scheduled"]) expect([id, open(id)]).toEqual([id, true]);
+    for (const id of ["p-movement", "p-calls", "p-counts", "p-runs"]) expect([id, exists(id), open(id)]).toEqual([id, true, false]);
+    expect(html).toContain('<summary><h2>In flight <span class="count">(1)</span></h2></summary>');
+    expect(html).toContain('<summary><h3>Runs <span class="count">(1)</span></h3></summary>');
+    expect(html).toContain('<details id="p-decisions">');
+    expect(html).toContain('<button type="button" id="expand">expand all</button>');
+    expect(html).toContain('<nav aria-label="Sections"><a href="#p-blocked">Blocked</a>');
+  });
+
+  it("needs-human cards come before waiting ones; long titles truncate with the full text on hover", () => {
+    expect(html.indexOf("</span> awaiting-risk")).toBeGreaterThan(0);
+    expect(html.indexOf("</span> awaiting-risk")).toBeLessThan(html.indexOf("</span> overdue-run"));
+    const t = "A very long title ".repeat(6);
+    expect(html).toContain(`<span class="trunc" title="${t}">${t}</span>`);
+    expect(html).toMatch(/<time datetime="2026-11-12T12:00:00Z">11-12 12:00<\/time> <span class="dim">\(1 h 40 min ago\)<\/span>/);
+  });
+
+  it("text and status colours pass WCAG AA on the background and cards in both themes", () => {
+    const lum = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ratio = (a: string, b: string) => (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
+    for (const [name, t] of Object.entries(THEMES))
+      for (const fg of ["fg", "fg2", "accent", "good", "warn", "bad", "mute"] as const)
+        for (const bg of ["bg", "card"] as const) expect([name, fg, bg, ratio(t[fg], t[bg]) >= 4.5]).toEqual([name, fg, bg, true]);
   });
 });
