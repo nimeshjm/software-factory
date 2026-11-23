@@ -76,12 +76,11 @@ const SVG_DOT = `<svg class="ico" viewBox="0 0 16 16" fill="currentColor" aria-h
 
 /** Runs before first paint so theme, density and persisted UI version apply without flash. */
 const BOOT_SCRIPT = `<script>(function(){
-var K="${STORAGE_PREFIX}",R=document.documentElement;
-try{var t=localStorage.getItem(K+"theme");if(t==="light"||t==="dark")R.setAttribute("data-theme",t)}catch(e){}
-try{var d=localStorage.getItem(K+"density");if(d==="compact")R.setAttribute("data-density",d)}catch(e){}
-var p=new URLSearchParams(location.search),u=p.get("ui");
-if(u==="new"){try{localStorage.setItem(K+"ui","new")}catch(e){}}
-else if(!u){var s=null;try{s=localStorage.getItem(K+"ui")}catch(e){}if(s==="old"){p.set("ui","old");location.replace("?"+p.toString()+location.hash)}}
+var R=document.documentElement;
+try{var t=localStorage.getItem("${STORAGE_PREFIX}theme");if(t==="light"||t==="dark")R.setAttribute("data-theme",t)}catch(e){}
+try{var d=localStorage.getItem("${STORAGE_PREFIX}density");if(d==="compact")R.setAttribute("data-density",d)}catch(e){}
+var u=new URLSearchParams(location.search).get("ui");
+if(u==="new"){try{localStorage.setItem("${STORAGE_PREFIX}ui","new")}catch(e){}}
 })();</script>`;
 
 /** Enhances controls, density, panel persistence, scroll restoration, filters, copy buttons, and auto-refresh. */

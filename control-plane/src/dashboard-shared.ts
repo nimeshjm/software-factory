@@ -1,6 +1,6 @@
 export type DashboardUi = "new" | "old";
 
-export const DEFAULT_UI: DashboardUi = "new";
+export const DEFAULT_UI: DashboardUi = "old";
 
 /** localStorage / sessionStorage key prefix for the page's per-viewer settings. */
 export const STORAGE_PREFIX = "factory-dash:";

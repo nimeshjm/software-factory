@@ -40,8 +40,8 @@ export const THEMES = {
   dark: { bg: "#1a1a19", fg: "#f0efec", fg2: "#c3c2b7", line: "#3a3936", card: "#242422", accent: "#6aa6ef", good: "#3fbf3f", warn: "#fab219", bad: "#f07070", mute: "#a3a29c" },
 } as const;
 
-/** Runs before first paint so a stored light/dark choice does not flash. */
-const THEME_BOOT = `<script>try{var t=localStorage.getItem("${STORAGE_PREFIX}theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}try{if(/[?&]ui=old(?:&|$)/.test(location.search))localStorage.setItem("${STORAGE_PREFIX}ui","old")}catch(e){}</script>`;
+/** Runs before first paint so a stored light/dark choice does not flash, and syncs/redirects the preferred UI version. */
+const THEME_BOOT = `<script>(function(){var R=document.documentElement;try{var t=localStorage.getItem("${STORAGE_PREFIX}theme");if(t==="light"||t==="dark")R.setAttribute("data-theme",t)}catch(e){}var p=new URLSearchParams(location.search),u=p.get("ui");if(u==="old"){try{localStorage.setItem("${STORAGE_PREFIX}ui","old")}catch(e){}}else if(!u){var s=null;try{s=localStorage.getItem("${STORAGE_PREFIX}ui")}catch(e){}if(s==="new"){p.set("ui","new");location.replace("?"+p.toString()+location.hash)}}})();</script>`;
 
 /**
  * Theme, panel state, scroll position and auto-refresh. Every storage access is in try/catch:

@@ -336,18 +336,18 @@ describe("helpers and html", () => {
     expect(nextTickAt(new Date("2026-11-12T13:40:00Z")).toISOString()).toBe("2026-11-12T13:45:00.000Z");
     expect(nextTickAt(new Date("2026-11-12T13:45:00Z")).toISOString()).toBe("2026-11-12T14:00:00.000Z");
   });
-  it("resolveUi defaults to new and accepts old/new", () => {
-    expect(DEFAULT_UI).toBe("new");
-    expect(resolveUi(null)).toBe("new");
+  it("resolveUi defaults to old and accepts old/new", () => {
+    expect(DEFAULT_UI).toBe("old");
+    expect(resolveUi(null)).toBe("old");
     expect(resolveUi("new")).toBe("new");
     expect(resolveUi("old")).toBe("old");
-    expect(resolveUi("bogus")).toBe("new");
+    expect(resolveUi("bogus")).toBe("old");
   });
-  it("renders and escapes in both New and Old UIs", () => {
+  it("renders and escapes in both Old and New UIs", () => {
     const d = buildDashboard(input({ openIssues: [issue(1, ["feature", "status:backlog"], { title: "<script>alert(1)</script>" })], paused: true }));
     for (const [ui, expectedWin, expectedToggle] of [
-      [undefined, 'href="?hours=24&ui=new"', 'href="?hours=48&ui=old"'],
-      ["old", 'href="?hours=24&ui=old"', 'href="?hours=48&ui=new"'],
+      [undefined, 'href="?hours=24&ui=old"', 'href="?hours=48&ui=new"'],
+      ["new", 'href="?hours=24&ui=new"', 'href="?hours=48&ui=old"'],
     ] as const) {
       const html = dashboardHtml(d, ui);
       expect(html).toContain("<!doctype html>");
@@ -373,7 +373,7 @@ function contrastRatio(a: string, b: string): number {
   return (Math.max(lum(a), lum(b)) + 0.05) / (Math.min(lum(a), lum(b)) + 0.05);
 }
 
-describe("html (legacy UI — ?ui=old): refresh, theme and panels", () => {
+describe("html (legacy UI — default): refresh, theme and panels", () => {
   const doc = buildDashboard(
     input({
       openIssues: [issue(1, ["feature", "status:backlog"], { title: "A very long title ".repeat(6) }), issue(2, ["feature", "status:backlog"])],
@@ -381,10 +381,10 @@ describe("html (legacy UI — ?ui=old): refresh, theme and panels", () => {
       runs: [run({ id: "stale", agent: "triage", subject: "issue:3", status: "started", dispatched_at: "2026-11-12T12:00:00Z" })],
     }),
   );
-  const html = dashboardHtml(doc, "old");
+  const html = dashboardHtml(doc);
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
 
-  it("matches dashboardHtmlLegacy", () => {
+  it("defaults to legacy UI when second argument is omitted", () => {
     expect(html).toBe(dashboardHtmlLegacy(doc));
   });
 
@@ -405,6 +405,31 @@ describe("html (legacy UI — ?ui=old): refresh, theme and panels", () => {
     expect(html).toContain('@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#1a1a19');
     expect(html).toContain(':root[data-theme="dark"]{color-scheme:dark;--bg:#1a1a19');
     expect(html.indexOf("factory-dash:theme")).toBeLessThan(html.indexOf("<style>"));
+  });
+
+  it("boot script persists ?ui=old and redirects bare /dashboard to ?ui=new when stored", () => {
+    const boot = scripts[0];
+    expect(boot).toContain("factory-dash:theme");
+    expect(boot).toContain("factory-dash:ui");
+    expect(boot).toContain('p.set("ui","new")');
+    expect(boot).toContain("location.replace");
+    const runBoot = (search: string, stored: Record<string, string> = {}) => {
+      const attrs: Record<string, string> = {};
+      let replaced: string | null = null;
+      const d = { documentElement: { setAttribute: (k: string, v: string) => { attrs[k] = v; } } };
+      const loc = { search, hash: "#p-next", replace: (url: string) => { replaced = url; } };
+      const ls = {
+        getItem: (k: string) => (k in stored ? stored[k] : null),
+        setItem: (k: string, v: string) => { stored[k] = v; },
+      };
+      new Function("document", "location", "localStorage", boot)(d, loc, ls);
+      return { attrs, stored, replaced };
+    };
+    expect(runBoot("?hours=24&ui=old")).toMatchObject({ stored: { "factory-dash:ui": "old" }, replaced: null });
+    expect(runBoot("?hours=24", { "factory-dash:ui": "new" })).toMatchObject({ replaced: "?hours=24&ui=new#p-next" });
+    expect(runBoot("", { "factory-dash:ui": "new" })).toMatchObject({ replaced: "?ui=new#p-next" });
+    expect(runBoot("?hours=24", { "factory-dash:ui": "old" })).toMatchObject({ replaced: null });
+    expect(runBoot("", { "factory-dash:theme": "dark" })).toMatchObject({ attrs: { "data-theme": "dark" }, replaced: null });
   });
 
   it("inline only: no external scripts or stylesheets, and the scripts parse", () => {
@@ -445,7 +470,7 @@ describe("html (legacy UI — ?ui=old): refresh, theme and panels", () => {
   });
 });
 
-describe("html (new UI — default)", () => {
+describe("html (new UI — ?ui=new)", () => {
   const doc = buildDashboard(
     input({
       openIssues: [issue(1, ["feature", "status:backlog"], { title: "A very long title ".repeat(6) }), issue(2, ["feature", "status:backlog"])],
@@ -455,10 +480,10 @@ describe("html (new UI — default)", () => {
       ],
     }),
   );
-  const html = dashboardHtml(doc);
+  const html = dashboardHtml(doc, "new");
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
 
-  it("defaults to New UI when second argument is omitted", () => {
+  it("matches dashboardHtmlNext when ui is new", () => {
     expect(html).toBe(dashboardHtmlNext(doc));
   });
 
@@ -479,10 +504,16 @@ describe("html (new UI — default)", () => {
     expect(styleIdx).toBeGreaterThan(0);
     const boot = scripts[0];
     expect(html.indexOf(boot)).toBeLessThan(styleIdx);
-    expect(boot).toContain("theme");
-    expect(boot).toContain("density");
-    expect(boot).toContain("ui");
+    expect(boot).toContain("factory-dash:theme");
+    expect(boot).toContain("factory-dash:density");
+    expect(boot).toContain("factory-dash:ui");
+    expect(boot).not.toContain("location.replace");
     expect(html.indexOf("factory-dash:")).toBeLessThan(styleIdx);
+    const stored: Record<string, string> = {};
+    const d = { documentElement: { setAttribute: () => {} } };
+    const ls = { getItem: (k: string) => stored[k] ?? null, setItem: (k: string, v: string) => { stored[k] = v; } };
+    new Function("document", "location", "localStorage", boot)(d, { search: "?ui=new" }, ls);
+    expect(stored["factory-dash:ui"]).toBe("new");
   });
 
   it("controls: theme, density, auto-refresh, expand/collapse, and always-visible UI toggle", () => {
