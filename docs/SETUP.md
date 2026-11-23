@@ -80,5 +80,8 @@ Apply it (owner only, never from Actions): `HONEYCOMB_CONFIG_KEY=<key> scripts/h
 | `15-pr-acceptance` | factory PRs closed in 30 days: merge rate and first-pass rate per agent | `pr.closed`: `agent`, `outcome` (derived `pr_merged`, `pr_first_pass`) |
 | `16-pr-outcomes` | PRs by outcome, autonomy label and agent | `pr.closed`: `outcome`, `autonomy`, `agent` |
 | `17-review-verdicts` | the reviewer's verdicts per day | `run.finished`: `agent_d`, `verdict` |
+| `18-tick-decisions` | what the tick decided per day by agent and reason (a gate held for days shows as one colour) | `tick.decision`: `agent`, `reason_d` (derived from `reason`, `kind`) |
+| `19-prs-opened` | factory PRs opened per day by agent | `pr.opened`: `agent` |
+| `20-merges-per-day` | factory PRs merged per day by autonomy label | `pr.closed`: `merged`, `autonomy` |
 
 Derived columns: `agent_d` on `factory` is `agent`, else parsed from `run_id`; `run_ok` on `factory` is 1 for a successful run; `pr_merged` and `pr_first_pass` on `factory` are 1/0 per `pr.closed` event (merged; merged without a revise round); `model_d` on `software-factory` is the model an event is about. The `agent_d` parse of `run_id` means events from before the `agent` field existed still group by agent.

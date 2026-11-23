@@ -1,0 +1,46 @@
+{
+  "dataset": "factory",
+  "name": "Merges per day",
+  "description": "Factory PRs merged per day by autonomy label (lit: a human approved; dark: merged without one). Reads pr.closed with merged = true.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "pr.closed"
+      },
+      {
+        "column": "merged",
+        "op": "=",
+        "value": true
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "autonomy"
+    ],
+    "time_range": 2592000,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "visualization_settings": {
+    "utc_xaxis": true,
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stacked"
+      }
+    ]
+  },
+  "position": {
+    "x_coordinate": 6,
+    "y_coordinate": 54,
+    "width": 6,
+    "height": 4
+  }
+}

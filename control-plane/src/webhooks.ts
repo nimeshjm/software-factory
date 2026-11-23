@@ -25,13 +25,36 @@ export function isDroppedSender(event: string, payload: any): boolean {
   return String(payload?.sender?.login ?? "").endsWith("[bot]");
 }
 
-/** Pure: the `pr.closed` Honeycomb event for a closed factory PR (bot author, `feat|fix/<n>-` head), else null. */
-export function prClosedEvent(payload: any): Record<string, unknown> | null {
-  const pr = payload?.pull_request;
+/** A factory PR: bot author and a `feat|fix/<n>-` head (the `preflight.reviseCandidates` rule), else null. */
+function factoryPr(pr: any): { author: string; issue_number: number; agent: string } | null {
   if (!pr) return null;
   const author = String(pr.user?.login ?? "");
   const m = /^(feat|fix)\/(\d+)-/.exec(String(pr.head?.ref ?? ""));
   if (!author.endsWith("[bot]") || !m) return null;
+  return { author, issue_number: Number(m[2]), agent: m[1] === "feat" ? "builder" : "bug-fixer" };
+}
+
+/** Pure: the `pr.opened` Honeycomb event for an opened factory PR, else null. */
+export function prOpenedEvent(payload: any): Record<string, unknown> | null {
+  const pr = payload?.pull_request;
+  const f = factoryPr(pr);
+  if (!f) return null;
+  return {
+    name: "pr.opened",
+    pr_number: typeof pr.number === "number" ? pr.number : null,
+    issue_number: f.issue_number,
+    agent: f.agent,
+    draft: pr.draft === true,
+    author: f.author,
+  };
+}
+
+/** Pure: the `pr.closed` Honeycomb event for a closed factory PR, else null. */
+export function prClosedEvent(payload: any): Record<string, unknown> | null {
+  const pr = payload?.pull_request;
+  const f = factoryPr(pr);
+  if (!f) return null;
+  const author = f.author;
   const labels = new Set<string>((pr.labels ?? []).map((l: any) => String(l?.name ?? "")));
   const autonomy = labels.has("autonomy:lit") ? "lit" : labels.has("autonomy:dark") ? "dark" : null;
   const merged = pr.merged === true;
@@ -40,8 +63,8 @@ export function prClosedEvent(payload: any): Record<string, unknown> | null {
   return {
     name: "pr.closed",
     pr_number: typeof pr.number === "number" ? pr.number : null,
-    issue_number: Number(m[2]),
-    agent: m[1] === "feat" ? "builder" : "bug-fixer",
+    issue_number: f.issue_number,
+    agent: f.agent,
     merged,
     outcome: merged ? (revised ? "merged_after_revise" : "merged_first_pass") : "closed_unmerged",
     revised,
@@ -139,8 +162,8 @@ export async function handleWebhook(req: Request, env: Env, ctx: ExecutionContex
     .run();
   if (!ins.meta.changes) return json({ duplicate: true });
   if (event === "ping") return json({ pong: true });
-  if (event === "pull_request" && payload.action === "closed" && String(payload.repository?.full_name ?? "").toLowerCase() === env.TARGET_REPO.toLowerCase()) {
-    const ev = prClosedEvent(payload);
+  if (event === "pull_request" && (payload.action === "opened" || payload.action === "closed") && String(payload.repository?.full_name ?? "").toLowerCase() === env.TARGET_REPO.toLowerCase()) {
+    const ev = payload.action === "opened" ? prOpenedEvent(payload) : prClosedEvent(payload);
     if (ev) void sendEvent(env, ev, ctx);
   }
   if (isDroppedSender(event, payload)) return json({ ignored: "bot sender" });

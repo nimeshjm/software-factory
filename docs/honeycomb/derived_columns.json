@@ -34,5 +34,11 @@
     "alias": "pr_first_pass",
     "expression": "IF(EQUALS($outcome, \"merged_first_pass\"), 1, 0)",
     "description": "1 when the factory PR was merged without a revise round: AVG over pr.closed is the accepted-without-revision rate."
+  },
+  {
+    "dataset": "factory",
+    "alias": "reason_d",
+    "expression": "COALESCE(REG_VALUE($reason, `^([a-z_]+)`), $kind)",
+    "description": "tick.decision reason without the per-issue detail (no_eligible_feature (#107:...) -> no_eligible_feature); the kind (dispatch, mark_lost) when there is no reason."
   }
 ]

@@ -1,0 +1,42 @@
+{
+  "dataset": "factory",
+  "name": "Tick decisions",
+  "description": "What the tick decided per day, by agent and reason (dispatch, bugs_first, no_eligible_bug, no_eligible_feature, in_flight, mark_lost...): an agent skipped for the same reason for days is stuck behind that gate. Reads tick.decision; reason_d drops the per-issue detail.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "tick.decision"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent",
+      "reason_d"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "visualization_settings": {
+    "utc_xaxis": true,
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stacked"
+      }
+    ]
+  },
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 50,
+    "width": 12,
+    "height": 4
+  }
+}

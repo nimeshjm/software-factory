@@ -15,7 +15,8 @@ HARNESS_PANELS = ("08", "09", "10", "12", "13", "14")
 PANEL_NAMES = ["00-runbook", "01-success-rate", "02-retry-loops", "03-run-outcomes", "04-where-runs-die",
                "05-quota-burn", "06-run-time", "07-model-calls-vs-cap", "08-model-reliability", "09-model-switches",
                "10-model-retries", "11-throttles", "12-tokens", "13-tool-guard-blocked", "14-guard-events",
-               "15-pr-acceptance", "16-pr-outcomes", "17-review-verdicts"]
+               "15-pr-acceptance", "16-pr-outcomes", "17-review-verdicts", "18-tick-decisions",
+               "19-prs-opened", "20-merges-per-day"]
 COLORS = {"red", "yellow", "blue", "green", "purple"}
 LINE_STYLES = {"filled-solid", "filled-dotted", "solid", "dotted"}
 
@@ -56,7 +57,7 @@ def test_dry_run_sequence_without_key():
         expected += [("POST", f"/1/queries/{ds}"), ("POST", f"/1/query_annotations/{ds}")]
     expected += [("PUT", f"/1/boards/{board_id}")] if board_id else [("POST", "/1/boards")]
     expected += [("GET", f"/1/query_annotations/{ds}") for ds in sorted(set(datasets))]
-    assert len(cols) == 6 and len(QUERY_PANELS) == 17
+    assert len(cols) == 7 and len(QUERY_PANELS) == 20
     assert [(m, p) for m, p, _ in reqs] == expected
     board = next(b for m, p, b in reqs if p.startswith("/1/boards") and m in ("PUT", "POST"))
     assert len(board["panels"]) == len(PANELS)
@@ -79,7 +80,7 @@ def test_board_json_shape():
     assert {p["column"] for p in b["preset_filters"]} == {"agent_d", "dry_run"}
     assert b["id"] is None or isinstance(b["id"], str)
     cols = json.loads((BOARD_DIR / "derived_columns.json").read_text())
-    assert {c["alias"] for c in cols} == {"agent_d", "calls_ratio", "run_ok", "model_d", "pr_merged", "pr_first_pass"}
+    assert {c["alias"] for c in cols} == {"agent_d", "calls_ratio", "run_ok", "model_d", "pr_merged", "pr_first_pass", "reason_d"}
     assert all(set(c) == {"dataset", "alias", "expression", "description"} for c in cols)
     assert {c["alias"]: c["dataset"] for c in cols}["model_d"] == "software-factory"
     assert "$factory.agent" not in {c["alias"]: c for c in cols}["agent_d"]["expression"]
@@ -208,7 +209,7 @@ printf '%s\n%s' "$body" "$code"
 
 FACTORY_COLS = ["name", "run_id", "agent", "subject", "phase", "status", "stop_reason", "error", "workflow_run_url",
                 "model_calls", "reserved_calls", "throttles", "duration_s", "queue_s", "dry_run", "outcome", "autonomy",
-                "verdict"]
+                "verdict", "kind", "reason", "merged"]
 HARNESS_COLS = ["name", "factory.agent", "factory.phase", "factory.model_id", "gen_ai.usage.input_tokens",
                 "gen_ai.usage.output_tokens", "factory.model.from", "factory.model.to", "factory.model.reason",
                 "factory.retry.reason", "rule", "guard", "gen_ai.request.model"]
@@ -286,7 +287,7 @@ def test_update_path_replaces_board_and_upserts_columns(tmp_path):
     seq = _seq(calls)
     assert ("PUT", "/1/derived_columns/factory/dc2") in seq  # description differs
     assert ("PUT", "/1/derived_columns/factory/dc1") not in seq  # unchanged
-    assert sorted(_derived_posts(calls)) == ["model_d", "pr_first_pass", "pr_merged", "run_ok"]
+    assert sorted(_derived_posts(calls)) == ["model_d", "pr_first_pass", "pr_merged", "reason_d", "run_ok"]
     assert ("POST", "/1/boards") not in seq
     assert len([1 for m, p in seq if m == "POST" and p.startswith("/1/queries/")]) == len(QUERY_PANELS)
     assert len(_panel_posts(calls)) == len(QUERY_PANELS)
@@ -312,7 +313,7 @@ def test_identical_derived_column_is_not_written(tmp_path):
     r, calls = s.run()
     assert r.returncode == 0, r.stderr
     first = _derived_posts(calls)
-    assert sorted(first) == ["agent_d", "calls_ratio", "model_d", "pr_first_pass", "pr_merged", "run_ok"]
+    assert sorted(first) == ["agent_d", "calls_ratio", "model_d", "pr_first_pass", "pr_merged", "reason_d", "run_ok"]
     r, calls = s.run()
     assert r.returncode == 0, r.stderr
     assert not [c for c in calls if c[1].startswith("/1/derived_columns/") and c[0] in WRITES]
@@ -403,7 +404,7 @@ def test_missing_column_skips_derived_column_and_panels(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "skipping derived column calls_ratio" in r.stderr and "reserved_calls" in r.stderr
     assert "skipping panel 07-model-calls-vs-cap" in r.stderr
-    assert _derived_posts(calls) == ["agent_d", "run_ok", "model_d", "pr_merged", "pr_first_pass"]
+    assert _derived_posts(calls) == ["agent_d", "run_ok", "model_d", "pr_merged", "pr_first_pass", "reason_d"]
     assert len(_panel_posts(calls)) == len(QUERY_PANELS) - 1
     assert ("POST", "/1/boards") in _seq(calls)
     assert f"applied {len(QUERY_PANELS) - 1} of {len(QUERY_PANELS)} panels" in r.stderr
