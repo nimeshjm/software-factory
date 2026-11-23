@@ -91,3 +91,60 @@ def test_non_reviewer_verdict_is_null(tmp_path):
 
 def test_denied_verdict_is_null(tmp_path):
     assert _run(tmp_path, {}, {"verdict": "approve"}, AGENT="reviewer", DENIED="true")["verdict"] is None
+
+
+def _guard(detail, guard="tool_guard", rule="profile_path"):
+    return {"guard": guard, "rule": rule, "detail": detail, "ts": 1}
+
+
+def test_job_failure_after_harness_success_uses_step_error_and_blocks(tmp_path):
+    res = _res()
+    res["guard_events"] = [_guard("edit_file: package.json is protected"), _guard("edit_file: package.json is protected"),
+                           _guard("soft", guard="latency", rule="soft_nudge"), _guard("shell: rm blocked"),
+                           _guard("third")]
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "step-error.txt").write_text("no commits ahead of main\n")
+    b = _run(tmp_path, {"implement": res}, PHASES="implement", JOB_STATUS="failure")
+    assert b["status"] == "failed"
+    assert b["error"] == ("apply: no commits ahead of main; blocked: edit_file: package.json is protected; "
+                          "blocked: shell: rm blocked")
+
+
+def test_job_failure_without_step_error_file(tmp_path):
+    b = _run(tmp_path, {"implement": _res()}, PHASES="implement", JOB_STATUS="failure")
+    assert b["error"] == "post-step failed (see run log)"
+
+
+def test_harness_error_gets_blocked_suffix_and_success_stays_null(tmp_path):
+    bad = _res(False, 0, "boom")
+    bad["guard_events"] = [_guard("denied path")]
+    b = _run(tmp_path, {"implement": bad}, PHASES="implement", JOB_STATUS="failure")
+    assert b["error"] == "boom; blocked: denied path"
+    ok = _res()
+    ok["guard_events"] = [_guard("denied path")]
+    (tmp_path / "t2").mkdir()
+    b = _run(tmp_path / "t2", {"implement": ok}, PHASES="implement", JOB_STATUS="success")
+    assert b["error"] is None
+
+
+def test_no_changes_error_is_not_suffixed_twice(tmp_path):
+    """A harness no_changes error already names its guard blocks; the sender must not repeat them."""
+    import json, os, subprocess
+    from pathlib import Path
+    out = tmp_path / "out" / "phases" / "implement"
+    out.mkdir(parents=True)
+    err = "implement proposed no file changes and no findings; blocked: edit_file: package.json is protected"
+    (out / "result.json").write_text(json.dumps({
+        "success": False, "stop_reason": "no_changes", "model_calls": 6, "error": err,
+        "guard_events": [{"guard": "tool_guard", "rule": "profile_path", "detail": "edit_file: package.json is protected"}]}))
+    bindir = tmp_path / "bin"; bindir.mkdir()
+    cap = tmp_path / "payload.json"
+    (bindir / "curl").write_text(f'#!/usr/bin/env bash\nwhile [ $# -gt 0 ]; do if [ "$1" = --data ]; then printf %s "$2" > {cap}; fi; shift; done\n')
+    (bindir / "curl").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "OUT_DIR": str(tmp_path / "out"),
+           "RUN_ID": "r1", "FACTORY_URL": "http://x", "FACTORY_TOKEN": "t", "JOB_STATUS": "failure",
+           "PHASES": "implement", "AGENT": "bug-fixer", "ISSUE": "121"}
+    root = Path(__file__).resolve().parent.parent
+    subprocess.run([str(root / "scripts/ledger-post.sh"), "finished"], env=env, check=True, cwd=tmp_path)
+    assert json.loads(cap.read_text())["error"] == err

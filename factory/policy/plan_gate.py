@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..schemas.target_profile import PlanReview, TargetProfile
+from .globs import match_glob
+from .protected import protected_globs
 
 APPROVED = "plan:approved"
 
@@ -25,9 +27,12 @@ def _hold_on(profile: dict[str, Any] | TargetProfile | None) -> list[str]:
     return list(PlanReview().hold_on)
 
 
-def plan_gate(labels: list[str], profile: dict[str, Any] | TargetProfile | None, needs_human: bool) -> PlanGateDecision:
-    """Hold after the plan when it needs a human, or a hold_on label is set without plan:approved."""
+def plan_gate(labels: list[str], profile: dict[str, Any] | TargetProfile | None, needs_human: bool,
+              files: list[str] | None = None) -> PlanGateDecision:
+    """Hold after the plan when it needs a human, names a protected path, or a hold_on label is set without plan:approved."""
     reasons: list[str] = ["needs_human"] if needs_human else []
+    globs = protected_globs(profile)
+    reasons += [f"protected:{f}" for f in (files or []) if any(match_glob(str(f), g) for g in globs)]
     if APPROVED not in labels:
         reasons += [f"label:{x}" for x in _hold_on(profile) if x in labels]
     return PlanGateDecision(bool(reasons), reasons)

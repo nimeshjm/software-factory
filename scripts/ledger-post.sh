@@ -61,12 +61,24 @@ case "$EVENT" in
       done
       phase="${bad_phase:-$last_phase}"
       if [ "$phase" = "out" ] || [ "$phase" = "$(basename "$OUT_DIR")" ]; then phase="${PHASE:-}"; fi
-      payload="$(jq -n --argjson r "$agg" --arg job "${JOB_STATUS:-}" --arg pr "${PR:-}" --arg issue "${ISSUE:-}" --arg cpr "$created_pr" \
+      # Error: harness error of the first failing phase, else the failed post-step's own message;
+      # then up to two distinct tool_guard blocks (soft nudges are other guards) across the phases.
+      step_error=""
+      if [ -s "$OUT_DIR/step-error.txt" ]; then step_error="$(head -c 600 "$OUT_DIR/step-error.txt" | tr '\n' ' ' | sed 's/ *$//')"; fi
+      blocked="$(jq -s -r '[.[].guard_events[]? | select(.guard == "tool_guard") | .detail | select(type == "string" and . != "")]
+        | reduce .[] as $d ([]; if index([$d]) then . else . + [$d] end) | .[:2] | join("; blocked: ")' "${results[@]}" 2>/dev/null || true)"
+      payload="$(jq -n --argjson r "$agg" --arg stepe "$step_error" --arg blocked "$blocked" --arg job "${JOB_STATUS:-}" --arg pr "${PR:-}" --arg issue "${ISSUE:-}" --arg cpr "$created_pr" \
         --arg phase "$phase" --argjson dry "$dry_run" --arg verdict "$verdict" \
         '{status: (if $r.success and ($job == "success" or $job == "") then "success" else "failed" end),
           stop_reason: $r.stop_reason, model_calls: $r.model_calls, usage: $r.usage,
           phase: (if $phase == "" then null else $phase end),
-          error: ($r.chosen.error | if type == "string" then .[:300] else null end),
+          error: (if ($r.success and ($job == "success" or $job == "")) then null
+                  else (($r.chosen.error | if type == "string" then . else "" end) as $he
+                    | (if $he != "" then $he
+                       elif $r.success then (if $stepe != "" then "apply: " + $stepe else "post-step failed (see run log)" end)
+                       else "" end) as $base
+                    | ($base + (if $blocked == "" or ($base | contains("blocked: ")) then "" elif $base == "" then "blocked: " + $blocked else "; blocked: " + $blocked end))
+                    | if . == "" then null else .[:300] end) end),
           throttles: $r.throttles, dry_run: $dry,
           verdict: (if $verdict == "" then null else $verdict end),
           pr_number: (if $cpr != "" then ($cpr | tonumber) elif $pr != "" then ($pr | tonumber) else null end),

@@ -93,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if ns.cmd == "plan-gate":
         labels = _labels_of(ns.issue) if ns.issue else []
-        decision = plan_gate(labels, _load(ns.factory), bool(_load(ns.plan).get("needs_human")))
+        plan = _load(ns.plan)
+        decision = plan_gate(labels, _load(ns.factory), bool(plan.get("needs_human")),
+                             [str(f) for f in plan.get("files") or []])
         json.dump(asdict(decision), sys.stdout)
         sys.stdout.write("\n")
         return 0

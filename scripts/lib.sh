@@ -23,7 +23,14 @@ HUMAN_ONLY_LABELS='["plan:approved","factory:accepted","ci-fix:attempted","auton
 
 log() { printf '%s\n' "$*" >&2; }
 warn() { printf '::warning::%s\n' "$*" >&2; }
-die() { printf '::error::%s\n' "$*" >&2; exit 1; }
+# die also leaves its message in $OUT_DIR/step-error.txt (first die wins) for ledger-post.sh.
+die() {
+  if [ -d "${OUT_DIR:-}" ] && [ ! -e "$OUT_DIR/step-error.txt" ]; then
+    printf '%s\n' "$*" >"$OUT_DIR/step-error.txt" 2>/dev/null || true
+  fi
+  printf '::error::%s\n' "$*" >&2
+  exit 1
+}
 
 # jq helpers. normauthor maps gh author objects to the contract form (app/<slug> for bots).
 JQ_NORM='def normauthor: if . == null then "ghost" else (.login // "ghost") as $l

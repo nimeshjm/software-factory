@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildStatus, failureAlert, finishedEvent, startedEvent } from "../src/ledger";
+import { buildStatus, handleFinished, failureAlert, finishedEvent, startedEvent } from "../src/ledger";
 import { sendEvent } from "../src/honeycomb";
 import { computeQuota } from "../src/quota";
 import type { RunRow } from "../src/types";
@@ -7,7 +7,7 @@ import type { RunRow } from "../src/types";
 const run = (o: Partial<RunRow>): RunRow => ({
   id: "r", agent: "builder", phase: null, subject: "issue:1", trigger: null, issue_number: null, pr_number: null,
   dispatched_at: "2026-10-21T01:00:00Z", started_at: null, finished_at: null, status: "dispatched",
-  stop_reason: null, model_calls: 0, reserved_calls: 0, workflow_run_url: null, ...o,
+  stop_reason: null, error: null, model_calls: 0, reserved_calls: 0, workflow_run_url: null, ...o,
 });
 const now = new Date("2026-10-21T12:00:00Z");
 
@@ -113,5 +113,29 @@ describe("sendEvent", () => {
     expect(init.headers["x-honeycomb-team"]).toBe("k");
     expect(init.headers["content-type"]).toBe("application/json");
     expect(JSON.parse(init.body)).toEqual({ service: "factory-control-plane", name: "run.finished", "usage.input_tokens": 5, error: null });
+  });
+});
+
+describe("handleFinished", () => {
+  const call = async (body: Record<string, unknown>) => {
+    const binds: unknown[][] = [];
+    const stmt = (sql: string) => ({
+      bind: (...a: unknown[]) => { if (sql.startsWith("UPDATE runs")) binds.push([sql, ...a]); return stmt(sql); },
+      run: async () => ({}),
+      first: async () => null,
+    });
+    const env = { DB: { prepare: stmt } } as never;
+    const req = new Request("https://x/runs/r1/finished", { method: "POST", body: JSON.stringify(body) });
+    const res = await handleFinished(req, env, { waitUntil() {} } as never, "r1");
+    expect(res.status).toBe(200);
+    return binds[0];
+  };
+
+  it("stores the error clipped to 300 chars, null when absent", async () => {
+    const withErr = await call({ status: "failed", stop_reason: "end_turn", error: "e".repeat(400) });
+    expect(withErr[1]).toBe("failed");
+    expect(withErr[3]).toBe("e".repeat(300));
+    const without = await call({ status: "success", stop_reason: "end_turn" });
+    expect(without[3]).toBeNull();
   });
 });

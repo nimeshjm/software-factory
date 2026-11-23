@@ -52,6 +52,8 @@ export interface RunRow {
   finished_at: string | null;
   status: string;
   stop_reason: string | null;
+  /** Clipped error text from the finished report (migration 0002); null when none. */
+  error: string | null;
   model_calls: number;
   reserved_calls: number;
   workflow_run_url: string | null;

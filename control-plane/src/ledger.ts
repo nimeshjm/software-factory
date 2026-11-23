@@ -121,9 +121,9 @@ export async function handleFinished(req: Request, env: Env, ctx: ExecutionConte
   await ensureRun(env, id, b.agent ?? "", null, now);
   const calls = Number.isFinite(b.model_calls) ? Math.max(0, Math.floor(b.model_calls as number)) : 0;
   await env.DB.prepare(
-    "UPDATE runs SET status = ?, stop_reason = ?, model_calls = ?, finished_at = ?, pr_number = COALESCE(?, pr_number), issue_number = COALESCE(?, issue_number) WHERE id = ?",
+    "UPDATE runs SET status = ?, stop_reason = ?, error = ?, model_calls = ?, finished_at = ?, pr_number = COALESCE(?, pr_number), issue_number = COALESCE(?, issue_number) WHERE id = ?",
   )
-    .bind(b.status, b.stop_reason ?? null, calls, now, toInt(b.pr_number), toInt(b.issue_number), id)
+    .bind(b.status, b.stop_reason ?? null, typeof b.error === "string" ? b.error.slice(0, 300) : null, calls, now, toInt(b.pr_number), toInt(b.issue_number), id)
     .run();
   await env.DB.prepare("DELETE FROM locks WHERE run_id = ?").bind(id).run();
   const row = await env.DB.prepare("SELECT * FROM runs WHERE id = ?").bind(id).first<RunRow>();

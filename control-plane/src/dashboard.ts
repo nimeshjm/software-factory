@@ -9,12 +9,14 @@ import {
   candidateQueue,
   reviseCandidates,
   countFactoryPRs,
+  failureBackoff,
   isDependabot,
   prReferences,
   STALE_GRACE_MIN,
   urgentBugs,
   type IssueInfo,
   type PRInfo,
+  type RecentRun,
 } from "./preflight";
 import { computeQuota, isPaused } from "./quota";
 import type { Env, RunRow } from "./types";
@@ -86,6 +88,8 @@ export interface Blocker {
   action: string;
   url: string | null;
   needs_human: boolean;
+  /** Raw run error text for `failed-run`; null when the run reported none. */
+  detail?: string | null;
 }
 
 export interface RunSummary {
@@ -190,6 +194,18 @@ function runIssue(r: RunRow): number | null {
   if (r.issue_number) return r.issue_number;
   const m = /^issue:(\d+)$/.exec(r.subject);
   return m ? Number(m[1]) : null;
+}
+
+/** Pure: why a run failed, plus what the tick will do about it (same backoff computation as the tick). */
+function failedRunReason(r: RunRow, now: Date, recent: RecentRun[]): string {
+  const why = (r.error || r.stop_reason || "").replace(/[.\s]+$/, "");
+  let s = `Last run ${r.status} at ${r.finished_at ?? "?"}${why ? `: ${why}` : ""}.`;
+  const subject = r.issue_number ? `issue:${r.issue_number}` : r.subject;
+  const back = /^(issue|revise):/.test(subject) ? failureBackoff(subject, recent, now) : null;
+  if (back?.startsWith("retry-after:")) s += ` Retries automatically after ${back.slice(back.indexOf("T") + 1, -1)} UTC.`;
+  else if (back?.startsWith("failure-cap:")) s += ` Failure cap: no retry until ${back.slice("failure-cap:".length, -1).replace("T", " ")} UTC.`;
+  else s += " Nothing will retry it.";
+  return s;
 }
 
 /** One plain-English sentence per block kind: what a human does on GitHub, or what the item is waiting for. */
@@ -330,9 +346,12 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
     if (r.status === "failed" || r.status === "timeout" || r.status === "lost") {
       add({
         kind: "failed-run", subject: `run:${r.id}`, title: `${r.agent} ${r.subject}`,
-        reason: `Last run on this subject ended ${r.status}${r.stop_reason ? ` (${r.stop_reason})` : ""} at ${r.finished_at ?? "?"}; nothing has retried it.`,
-        action: "Read the run log. A guard stop (quota, latency, context, turns) repeats on retry; a transient GitHub error is cleared by relabelling the issue status:backlog.",
+        reason: failedRunReason(r, input.now, input.runs.map((x) => ({ agent: x.agent, subject: x.subject, dispatchedAt: x.dispatched_at, status: x.status }))),
+        action: r.error && /blocked:|protected/.test(r.error)
+          ? "A guard blocked it, so a retry fails the same way: fix the cause first (the blocked path or command is named above)."
+          : "Read the run log. A guard stop (quota, latency, context, turns) repeats on retry; a transient GitHub error is cleared by relabelling the issue status:backlog.",
         url: r.workflow_run_url,
+        detail: r.error ?? null,
       });
     }
   }

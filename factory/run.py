@@ -28,6 +28,15 @@ FINALIZE_PROMPT = (
     "incomplete. Do not call any other tool.")
 
 
+def _no_changes_error(log: GuardLog) -> str:
+    """Contract error text; names up to two distinct tool_guard blocks, the usual cause."""
+    details: list[str] = []
+    for e in log.events:
+        if e["guard"] == "tool_guard" and e["detail"] not in details:
+            details.append(e["detail"])
+    return "implement proposed no file changes and no findings" + "".join(f"; blocked: {d}" for d in details[:2])
+
+
 def needs_finalize(stop_reason: str, has_proposal: bool, nudged: bool) -> bool:
     """One more short invocation when the first ended without a proposal after a nudge or on a token/turn limit."""
     if has_proposal:
@@ -188,7 +197,12 @@ def run(args: argparse.Namespace) -> int:
             result.error = "no valid structured proposal"
         else:
             clean, findings = scan_obj(so.model_dump(mode="json"), profile)
-            if findings:
+            if (args.agent in ("builder", "bug-fixer") and args.phase in ("implement", "revise")
+                    and not clean.get("files") and not (clean.get("findings_md") or "").strip()):
+                result.error = _no_changes_error(log)
+                result.stop_reason = "no_changes"
+                _write(out, "proposal.json", json.dumps(clean, indent=2))
+            elif findings:
                 result.error = f"output_guard blocked secret patterns: {', '.join(findings)}"
                 log.record("output_guard", "secret_in_output", ", ".join(findings))
             else:

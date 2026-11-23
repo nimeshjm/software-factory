@@ -11,7 +11,7 @@ const REPO = "o/target";
 const run = (o: Partial<RunRow>): RunRow => ({
   id: "r", agent: "builder", phase: null, subject: "issue:1", trigger: "cron", issue_number: null, pr_number: null,
   dispatched_at: "2026-11-12T13:30:00Z", started_at: null, finished_at: null, status: "dispatched",
-  stop_reason: null, model_calls: 0, reserved_calls: 0, workflow_run_url: null, ...o,
+  stop_reason: null, error: null, model_calls: 0, reserved_calls: 0, workflow_run_url: null, ...o,
 });
 const issue = (number: number, labels: string[], o: Partial<GhIssue> = {}): GhIssue => ({
   number, title: `Issue ${number}`, body: "", labels, authorAssociation: "OWNER", state: "open", author: "owner",
@@ -147,6 +147,40 @@ describe("buildDashboard", () => {
     expect(cap.reason).toContain("2026-11-13T11:00Z");
     expect(cap.action).toBe("gh workflow run builder.yml -f issue=107");
     expect(three.next.queue.find((q) => q.agent === "builder")!.items[0].reason).toBe("failure-cap:2026-11-13T11:00Z");
+  });
+
+  describe("failed-run card", () => {
+    const failed = (o: Partial<RunRow> = {}) =>
+      run({ id: "f1", agent: "bug-fixer", subject: "issue:121", issue_number: 121, status: "failed", stop_reason: "end_turn",
+        error: "apply: no commits ahead of main; blocked: edit_file: package.json is protected by the target profile (package.json)",
+        dispatched_at: "2026-11-12T13:00:00Z", finished_at: "2026-11-12T13:01:25Z", ...o });
+    const card = (runs: RunRow[]) => buildDashboard(input({ runs })).blocked.find((b) => b.kind === "failed-run")!;
+
+    it("says what failed and when the tick retries", () => {
+      const c = card([failed()]);
+      expect(c.reason).toBe(
+        "Last run failed at 2026-11-12T13:01:25Z: apply: no commits ahead of main; blocked: edit_file: package.json is protected by the target profile (package.json). Retries automatically after 14:00 UTC.",
+      );
+      expect(c.detail).toContain("package.json is protected");
+    });
+
+    it("guard text as the action when the error contains blocked:", () => {
+      expect(card([failed()]).action).toMatch(/^A guard blocked it, so a retry fails the same way/);
+      expect(card([failed({ error: "boom" })]).action).toMatch(/^Read the run log/);
+    });
+
+    it("failure cap sentence", () => {
+      const runs = [0, 1, 2].map((n) => failed({ id: `f${n}`, dispatched_at: `2026-11-12T0${n + 6}:00:00Z`, finished_at: `2026-11-12T0${n + 6}:05:00Z` }));
+      expect(card(runs).reason).toContain("Failure cap: no retry until 2026-11-13 06:00 UTC.");
+    });
+
+    it("falls back to stop_reason, then status alone, and says nothing retries non-issue subjects", () => {
+      const c = card([failed({ error: null })]);
+      expect(c.reason).toContain("failed at 2026-11-12T13:01:25Z: end_turn.");
+      expect(c.detail).toBeNull();
+      const d = card([failed({ error: null, stop_reason: null, subject: "deploy:1", issue_number: null })]);
+      expect(d.reason).toBe("Last run failed at 2026-11-12T13:01:25Z. Nothing will retry it.");
+    });
   });
 
   it("a manual rerun that succeeded clears the failed-run of the cron run on the same issue", () => {

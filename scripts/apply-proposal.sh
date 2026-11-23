@@ -160,7 +160,7 @@ apply_plan() {
   local gate hold needs_human footer
   gate="$(plan_gate "$f")" || die "plan-gate failed"
   hold="$(jq -er '.hold | tostring' <<<"$gate")" || die "plan-gate returned '$gate'"
-  needs_human="$(jq -r 'any(.reasons[]; . == "needs_human")' <<<"$gate")"
+  needs_human="$(jq -r 'any(.reasons[]; . == "needs_human" or startswith("protected:"))' <<<"$gate")"
   footer="$(amigos_footer)"
   { printf '%s\n' "$PLAN_MARKER"
     jq -r '"<!-- factory:plan-files " + ({files: .files} | tojson) + " -->"' "$f"
@@ -172,6 +172,9 @@ apply_plan() {
       + "| Files | \(.files | length)" + (if (.files | length) > 0 then ": " + ([.files[] | "`" + . + "`"] | join(", ") | cell) else "" end) + " |\n"
       + "| Needs a human | " + (if .needs_human then "yes" + (if (.risk_notes | length) > 0 then ": " + (.risk_notes | join("; ") | cell) else "" end) else "no" end) + " |\n"
       + "| Gate | " + (if ($gate.hold | not) then "implement follows in this run"
+                       elif any($gate.reasons[]; startswith("protected:")) then
+                         "held: plan edits protected paths " + ([$gate.reasons[] | select(startswith("protected:")) | "`" + .[10:] + "`"] | join(", "))
+                         + "; agents cannot edit them (factory.yml protected.paths). Make the change by hand or change the profile, then remove needs-human and set status:backlog"
                        elif any($gate.reasons[]; . == "needs_human") then "held: needs_human; fix the issue, remove needs-human and set status:backlog"
                        else "held: " + ($gate.reasons | join(", ")) + "; add plan:approved to continue" end) + " |"
       + (if $amigos != "" then "\n| Amigos | " + $amigos + " |" else "" end) + "\n"' "$f"

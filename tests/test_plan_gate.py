@@ -93,3 +93,33 @@ def test_amigos_cli(tmp_path, capsys):
         "two_hats": {"ann": ["product", "development"]}, "any": True}
     policy_main(["amigos", "--factory", _write(tmp_path, "empty.json", {})])
     assert json.loads(capsys.readouterr().out)["any"] is False
+
+
+def test_plan_gate_protected_files():
+    prof = {"plan_review": {"hold_on": ["risk:high"]}, "protected": {"paths": ["package.json", "infra/**"]}}
+    files = ["src/a.py", "package.json", ".github/workflows/ci.yml", "factory.yml", "infra/x/y.tf", ".git/config"]
+    d = plan_gate([], prof, False, files)
+    assert d.hold and d.reasons == ["protected:package.json", "protected:.github/workflows/ci.yml",
+                                    "protected:factory.yml", "protected:infra/x/y.tf", "protected:.git/config"]
+    d = plan_gate(["risk:high", "plan:approved"], prof, False, ["package.json"])
+    assert d.hold and d.reasons == ["protected:package.json"]  # approval does not lift it
+    d = plan_gate(["risk:high"], prof, True, ["package.json"])
+    assert d.reasons == ["needs_human", "protected:package.json", "label:risk:high"]
+    assert not plan_gate([], prof, False, ["src/a.py"]).hold
+    assert not plan_gate([], {}, False, ["package.json"]).hold  # only the baseline without a profile
+    assert plan_gate([], TargetProfile(protected={"paths": ["package.json"]}), False, ["package.json"]).hold
+    assert plan_gate([], {}, False, ["./factory.yml"]).reasons == ["protected:./factory.yml"]
+
+
+def test_plan_gate_cli_files(tmp_path, capsys):
+    factory = _write(tmp_path, "factory.json", {"protected": {"paths": ["package.json"]}})
+    plan = _write(tmp_path, "proposal.json", {"needs_human": False, "files": ["a.py", "package.json"]})
+    policy_main(["plan-gate", "--factory", factory, "--plan", plan])
+    assert json.loads(capsys.readouterr().out) == {"hold": True, "reasons": ["protected:package.json"]}
+
+
+def test_baseline_globs_match_tool_guard():
+    from factory.guards.tool_guard import BASELINE_PATH_RULES
+    from factory.policy.protected import BASELINE_GLOBS
+
+    assert tuple(g for _r, g, _t, _d in BASELINE_PATH_RULES) == BASELINE_GLOBS
