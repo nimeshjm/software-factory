@@ -134,9 +134,30 @@ def review_todo(pr: dict[str, Any]) -> list[str]:
     return items
 
 
+def _summary_line(text: str) -> str:
+    """First markdown heading (else first non-empty line) of a context file, clipped for the index."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    first = next((ln.lstrip("# ").strip() for ln in lines if ln.startswith("#")), lines[0] if lines else "")
+    return first[:120]
+
+
+def split_context(inputs_dir: str | Path, profile: TargetProfile | None,
+                  inline: list[str] | None) -> tuple[list[Path], list[Path]]:
+    """(inlined, listed) context files in profile order. `inline` None = inline every file (the old behaviour)."""
+    ctx = Path(inputs_dir) / "context"
+    if not ctx.is_dir():
+        return [], []
+    files = _context_files(ctx, (profile or TargetProfile()).context_files)
+    if inline is None:
+        return files, []
+    keep = [f for f in files if any(context_glob_matches(f.relative_to(ctx).as_posix(), g) for g in inline)]
+    return keep, [f for f in files if f not in keep]
+
+
 def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dirs: list[Path] | None = None,
                        profile: TargetProfile | None = None, context_globs: list[str] | None = None) -> str:
-    """The task message. `context_globs`, when given, inlines only the context files matching one of them."""
+    """The task message. `context_globs`, when given, inlines only the context files named by them and lists the
+    rest (name, size, first heading) for the `read_context` tool."""
     d = Path(inputs_dir)
     out: list[str] = []
     run = _load(d, "run.json") or {}
@@ -208,12 +229,16 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
             out.append(untrusted(name, json.dumps(data, indent=1)))
 
     ctx = d / "context"
-    if ctx.is_dir():
-        for f in _context_files(ctx, (profile or TargetProfile()).context_files):
-            if context_globs is not None and not any(context_glob_matches(f.relative_to(ctx).as_posix(), g)
-                                                     for g in context_globs):
-                continue
-            out.append(f'<context file="{f.relative_to(ctx).as_posix()}">\n{f.read_text(encoding="utf-8")}\n</context>')
+    inlined, listed = split_context(d, profile, context_globs)
+    for f in inlined:
+        out.append(f'<context file="{f.relative_to(ctx).as_posix()}">\n{f.read_text(encoding="utf-8")}\n</context>')
+    if listed:
+        rows = []
+        for f in listed:
+            text = f.read_text(encoding="utf-8", errors="replace")
+            rows.append(f"- `{f.name}` ({len(text):,} chars): {_summary_line(text)}")
+        out.append("## Context files not inlined (call `read_context` with the name when a step needs one)\n"
+                   + "\n".join(rows))
 
     for base in [d, *(extra_dirs or [])]:
         for art in ("research.md", "plan.md"):

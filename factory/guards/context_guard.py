@@ -59,7 +59,17 @@ def build_context_kwargs(ctx: dict[str, Any]) -> dict[str, Any]:
     try:
         from strands.experimental.context_manager import ContextManager, Offload
 
-        strategies = [
+        strategies = []
+        trim = ctx.get("trim_old_results")
+        if trim:
+            # Older tool results shrink to a head/tail preview; the most recent ones stay whole. A run re-sends
+            # the whole conversation on every call, so this caps how fast each call grows (CONTRACTS.md,
+            # Trimming old tool results). Research evidence (fetch_url, web_search) is exempt.
+            target = [f"!{t}" for t in trim.get("exempt_tools", ["fetch_url", "web_search"])] or "tool_results"
+            strategies.append(
+                Offload.truncate(target, {"preview_tokens": int(trim.get("preview_tokens", 120)), "preview": "head_tail"})
+                .when(threshold=int(trim.get("threshold_tokens", 400)), preserve_recent=int(trim.get("preserve_recent", 6))))
+        strategies += [
             Offload.truncate("tool_results").when(threshold=int(ctx.get("offload_threshold_tokens", 2000))),
             Offload.summarize("*").when(
                 utilization=float(ctx.get("summarize_utilization", 0.8)),

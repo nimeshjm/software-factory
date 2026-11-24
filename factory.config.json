@@ -149,6 +149,13 @@
     "preserve_recent": 4,
     "edit_nudge_fraction": 0.35,
     "edit_read_limit": 12,
+    "inline_context_files": ["conventions.md"],
+    "trim_old_results": {
+      "preserve_recent": 6,
+      "threshold_tokens": 400,
+      "preview_tokens": 120,
+      "exempt_tools": ["fetch_url", "web_search"]
+    },
     "phase_context_files": {
       "revise": ["conventions.md", "architecture.md"]
     }

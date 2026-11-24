@@ -19,8 +19,9 @@ from .guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard, ToolCallLo
 from .guards.budget_guard import BudgetGuard
 from .guards.edit_guard import EditGuard
 from .guards.output_guard import redact, scan_obj
+from .tools.context import set_context_dir
 from .tools.profile import set_profile
-from .prompts import build_task_message, load_system_prompt
+from .prompts import build_task_message, load_system_prompt, split_context
 from .schemas import GuardEvent, RunResult, ToolCall, proposal_model_for
 from .schemas.models import ModelSwitch
 
@@ -65,6 +66,15 @@ def paid_allowance_from_env(env: Mapping[str, str]) -> float:
         return max(0.0, float(env.get("PAID_ALLOWANCE_USD") or 0))
     except ValueError:
         return 0.0
+
+
+def inline_context_for(context: dict[str, Any], phase: str) -> list[str] | None:
+    """Context files to inline: the phase's `phase_context_files`, else `inline_context_files`, else all (None)."""
+    per_phase = (context.get("phase_context_files") or {}).get(phase)
+    if per_phase is not None:
+        return list(per_phase)
+    default = context.get("inline_context_files")
+    return list(default) if default is not None else None
 
 
 def _build_model(spec, fake: bool, cfg: dict[str, Any] | None = None):
@@ -186,6 +196,7 @@ def run(args: argparse.Namespace) -> int:
             result.error = redact(oversize)[:1000]
             return 1
         set_profile(profile)
+        set_context_dir(inputs / "context")
         spec = apply_spike_model(cfg, resolve_run_spec(cfg, args.agent, args.phase), issue_labels(inputs))
         model_cls = proposal_model_for(args.agent, args.phase)
         telemetry.setup(str(run_id), args.agent, args.phase, run_json.get("issue_number"))
@@ -210,6 +221,10 @@ def run(args: argparse.Namespace) -> int:
                                        "factory.dry_run": bool(args.dry_run)}
         if run_json.get("issue_number") is not None:
             trace_attrs["work_tracker.issue_id"] = str(run_json["issue_number"])
+        inline_ctx = inline_context_for(spec.context, args.phase)
+        tool_names = list(spec.tools)
+        if split_context(inputs, profile, inline_ctx)[1] and "read_context" not in tool_names:
+            tool_names.append("read_context")  # some context files are listed, not inlined: let the agent read them
         model = _build_model(spec, args.fake_model, cfg)
         model_ids_used = getattr(model, "model_ids_used", None)
         if model_ids_used is not None:
@@ -221,16 +236,14 @@ def run(args: argparse.Namespace) -> int:
             name=telemetry.agent_name(args.agent, args.phase),
             model=model,
             system_prompt=load_system_prompt(args.agent, args.phase, Path(os.environ.get("FACTORY_ROOT") or ROOT), profile),
-            tools=build_tools(spec.tools),
+            tools=build_tools(tool_names),
             hooks=hooks,
             callback_handler=None,
             load_tools_from_directory=False,
             trace_attributes=trace_attrs,
             **build_context_kwargs(spec.context),
         )
-        phase_ctx = (spec.context.get("phase_context_files") or {}).get(args.phase)
-        task = build_task_message(inputs, args.agent, args.phase, [out], profile,
-                                  context_globs=list(phase_ctx) if phase_ctx is not None else None)
+        task = build_task_message(inputs, args.agent, args.phase, [out], profile, context_globs=inline_ctx)
         res = agent(task, limits=spec.limits, structured_output_model=model_cls)
         if needs_finalize(res.stop_reason, res.structured_output is not None, latency.nudged or budget.nudged):
             first_stop = res.stop_reason

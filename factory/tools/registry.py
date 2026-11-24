@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .context import read_context
 from .fetch import fetch_url
 from .files import edit_file, list_files, read_file, search_files
 from .honeycomb import honeycomb_query
@@ -21,6 +22,7 @@ TOOL_REGISTRY: dict[str, Any] = {
     "honeycomb_query": honeycomb_query,
     "fetch_url": fetch_url,
     "web_search": web_search,
+    "read_context": read_context,
 }
 
 
