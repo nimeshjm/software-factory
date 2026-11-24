@@ -59,11 +59,17 @@ def _build_model(spec, fake: bool):
     return FactoryGeminiModel(client_args={"api_key": key}, model_id=spec.model_id, params=spec.params,
                               fallback_model_ids=spec.fallback_model_ids,
                               first_event_timeout_s=spec.first_event_timeout_s,
-                              unresponsive_switch_after=spec.unresponsive_switch_after)
+                              unresponsive_switch_after=spec.unresponsive_switch_after,
+                              throttle_waits=spec.throttle_waits, throttle_wait_max_s=spec.throttle_wait_max_s)
 
 
 def _usage(res) -> dict[str, int]:
-    u = getattr(getattr(res, "metrics", None), "accumulated_usage", None) or {}
+    return _metrics_usage(getattr(res, "metrics", None))
+
+
+def _metrics_usage(metrics) -> dict[str, int]:
+    """Token totals from strands' EventLoopMetrics, which adds each model call's usage as it finishes."""
+    u = getattr(metrics, "accumulated_usage", None) or {}
     return {"input_tokens": int(u.get("inputTokens", 0)), "output_tokens": int(u.get("outputTokens", 0)),
             "total_tokens": int(u.get("totalTokens", 0))}
 
@@ -115,6 +121,7 @@ def run(args: argparse.Namespace) -> int:
     quota: QuotaGuard | None = None
     latency: LatencyGuard | None = None
     tool_log: ToolCallLog | None = None
+    agent: Any = None
     result = RunResult(run_id=str(run_id), agent=args.agent, phase=args.phase, success=False,
                        stop_reason="not_started", dry_run=bool(args.dry_run))
     try:
@@ -163,6 +170,7 @@ def run(args: argparse.Namespace) -> int:
             result.model_ids_used = model_ids_used
             result.model_switches = model.model_switches
             model.on_switch = lambda old, new: quota.extra_call()
+            model.on_throttle_wait = quota.throttle_wait
         agent = Agent(
             name=telemetry.agent_name(args.agent, args.phase),
             model=model,
@@ -224,6 +232,8 @@ def run(args: argparse.Namespace) -> int:
         else:
             result.stop_reason = "exception"
         result.error = redact(f"{type(e).__name__}: {e}")[:1000]
+        if agent is not None:  # the calls that finished before the exception still spent tokens
+            result.usage = type(result.usage)(**_metrics_usage(getattr(agent, "event_loop_metrics", None)))
         if isinstance(e, (KeyboardInterrupt, SystemExit)):
             raise
     finally:

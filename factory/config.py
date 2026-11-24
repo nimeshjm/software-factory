@@ -33,6 +33,8 @@ class RunSpec:
     fallback_model_ids: tuple[str, ...] = ()
     first_event_timeout_s: float = 150.0
     unresponsive_switch_after: int = 2
+    throttle_waits: int = 3
+    throttle_wait_max_s: float = 65.0
 
     @property
     def timeout_seconds(self) -> float:
@@ -89,6 +91,8 @@ def resolve_run_spec(cfg: dict[str, Any], agent: str, phase: str) -> RunSpec:
         fallback_model_ids=tuple(m.get("fallback_model_ids", [])),
         first_event_timeout_s=float(m.get("first_event_timeout_s", 150.0)),
         unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
+        throttle_waits=int(m.get("throttle_waits", 3)),
+        throttle_wait_max_s=float(m.get("throttle_wait_max_s", 65.0)),
     )
 
 
@@ -111,6 +115,8 @@ def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> 
                    fallback_model_ids=tuple(m.get("fallback_model_ids", [])),
                    first_event_timeout_s=float(m.get("first_event_timeout_s", 150.0)),
                    unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
+                   throttle_waits=int(m.get("throttle_waits", 3)),
+                   throttle_wait_max_s=float(m.get("throttle_wait_max_s", 65.0)),
                    max_model_calls=cap, limits=limits)
 
 

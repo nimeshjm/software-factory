@@ -157,21 +157,51 @@ def test_push_failure_is_a_warning_not_a_failure(tmp_path, env):
     assert "Work saved" not in (tmp_path / "comment.md").read_text()
 
 
-def test_failed_revise_swaps_pr_labels_and_comments_on_the_pr(tmp_path, env):
+def _revise_env(tmp_path, env):
+    """Only a failed revise phase, the work checked out on the PR branch as pushed, and inputs/branch.txt."""
     out = tmp_path / "out" / "phases"
     for d in out.iterdir():
         (d / "result.json").unlink()
-    phase(tmp_path, "revise", success=False, stop_reason="timeout", error="deadline")
+    phase(tmp_path, "revise", success=False, stop_reason="exception", error="quota gone")
+    git("push", "-q", "origin", "feat/125-x", cwd=tmp_path / "work")
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "branch.txt").write_text("feat/125-x")
+    return {**env, "PR": "7", "INPUTS_DIR": str(inputs)}
+
+
+def test_failed_revise_saves_work_swaps_pr_labels_and_comments_on_the_pr(tmp_path, env):
+    renv = _revise_env(tmp_path, env)
     (tmp_path / "work" / "b.txt").write_text("half done\n")
-    p, calls = salvage(tmp_path, env, PR="7")
+    p, calls = salvage(tmp_path, renv)
     assert p.returncode == 0, p.stderr
-    assert backups(tmp_path) == []
-    assert not (tmp_path / "out" / "salvage.txt").exists()
+    assert backups(tmp_path) == ["backup/125-revise-attempt1-exception"]
+    files = subprocess.run(["git", "show", "--name-only", "--format=", "backup/125-revise-attempt1-exception"],
+                           cwd=tmp_path / "origin.git", capture_output=True, text=True).stdout.split()
+    assert files == ["b.txt"]
+    pr_head = subprocess.run(["git", "rev-parse", "feat/125-x"], cwd=tmp_path / "origin.git",
+                             capture_output=True, text=True).stdout
+    parent = subprocess.run(["git", "rev-parse", "backup/125-revise-attempt1-exception^"],
+                            cwd=tmp_path / "origin.git", capture_output=True, text=True).stdout
+    assert parent == pr_head  # a fast-forward of the PR branch, which itself is untouched
+    assert (tmp_path / "out" / "salvage.txt").read_text().strip() == "backup/125-revise-attempt1-exception"
     assert any("pr edit 7" in c and "--add-label revise:attempted,needs-human" in c
                and "--remove-label revise:requested" in c for c in calls)
     assert not any(c.startswith("issue ") for c in calls)
     assert any(c.startswith("pr comment 7") for c in calls)
     body = (tmp_path / "comment.md").read_text()
     assert body.startswith("<!-- factory:failure -->")
-    assert "failed in revise (timeout): deadline." in body
+    assert "failed in revise (exception): quota gone." in body
+    assert "Work saved on `backup/125-revise-attempt1-exception`." in body
     assert "No work was pushed to the PR branch." in body
+    assert "`git push origin backup/125-revise-attempt1-exception:feat/125-x`" in body
+
+
+def test_failed_revise_with_nothing_new_pushes_no_backup(tmp_path, env):
+    renv = _revise_env(tmp_path, env)
+    p, _ = salvage(tmp_path, renv)
+    assert p.returncode == 0, p.stderr
+    assert backups(tmp_path) == []
+    assert "salvage: nothing to save" in p.stderr
+    body = (tmp_path / "comment.md").read_text()
+    assert "No work was pushed to the PR branch." in body and "Work saved" not in body

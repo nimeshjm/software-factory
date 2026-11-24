@@ -4,11 +4,14 @@ Strands maps RESOURCE_EXHAUSTED/UNAVAILABLE to ModelThrottledException only for 
 A 503 arrives as ServerError, so the run died on the first overloaded call instead of backing off.
 A 429 arrives as ModelThrottledException (raised `from` the ClientError, strands/models/gemini.py), so the
 daily-quota check reads the QuotaFailure details off `__cause__`; backing off for hours would only fail the run.
+A per-minute 429 is waited out on the same model (RetryInfo `retryDelay`, capped) before it counts toward a switch:
+switching after strands' 4 s retry moved runs onto the last fallback, whose free-tier daily quota is the smallest.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
@@ -46,6 +49,32 @@ def is_daily_quota_error(error: BaseException) -> bool:
     return any(e is not None and "per day limit exceeded" in str(e).lower() for e in chain)
 
 
+def _retry_delays(obj: Any) -> list[str]:
+    """Every RetryInfo `retryDelay` value (e.g. "23s") anywhere in a details payload."""
+    if isinstance(obj, dict):
+        found = [str(obj["retryDelay"])] if "retryDelay" in obj else []
+        return found + [d for v in obj.values() for d in _retry_delays(v)]
+    if isinstance(obj, list):
+        return [d for v in obj for d in _retry_delays(v)]
+    return []
+
+
+def throttle_delay(error: BaseException, attempt: int, cap_s: float) -> float:
+    """Seconds to wait before resending a per-minute throttle: the server's retryDelay (plus 1 s), else 15 s doubling; capped."""
+    chain = [error, error.__cause__]
+    for e in chain:
+        if e is None:
+            continue
+        for d in _retry_delays(getattr(e, "details", None)):
+            m = re.fullmatch(r"\s*([0-9.]+)s\s*", d)
+            if m:
+                return min(float(m.group(1)) + 1.0, cap_s)
+        m = re.search(r"retry in ([0-9.]+)s", str(e))
+        if m:
+            return min(float(m.group(1)) + 1.0, cap_s)
+    return min(15.0 * 2 ** attempt, cap_s)
+
+
 def unresponsive_reason(error: BaseException) -> str | None:
     """Why a failed call counts toward switching models: a per-minute throttle, a 503, or a dropped connection."""
     if isinstance(error, ModelThrottledException):
@@ -59,12 +88,18 @@ def unresponsive_reason(error: BaseException) -> str | None:
 
 class FactoryGeminiModel(GeminiModel):
     def __init__(self, *args: Any, fallback_model_ids: tuple[str, ...] | list[str] = (),
-                 first_event_timeout_s: float = 150, unresponsive_switch_after: int = 2, **kwargs: Any) -> None:
+                 first_event_timeout_s: float = 150, unresponsive_switch_after: int = 2,
+                 throttle_waits: int = 3, throttle_wait_max_s: float = 65, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.fallback_model_ids = list(fallback_model_ids)
         self.first_event_timeout_s = first_event_timeout_s
         self.unresponsive_switch_after = unresponsive_switch_after
         self.unresponsive_calls = 0
+        self.throttle_waits = throttle_waits
+        self.throttle_wait_max_s = throttle_wait_max_s
+        self.throttle_waits_done = 0  # per-minute waits since the last content event; reset on a switch
+        self.sleep: Callable[[float], Any] = asyncio.sleep
+        self.on_throttle_wait: Callable[[], None] | None = None
         self.model_ids_used: list[str] = [self.config["model_id"]]
         self.model_switches: list[dict[str, str]] = []
         self.on_switch: Callable[[str, str], None] | None = None
@@ -77,6 +112,7 @@ class FactoryGeminiModel(GeminiModel):
             detail = reason.split(":", 1)[-1]
             print(f"[model] {old} unresponsive ({detail}); switching to {new}", file=sys.stderr, flush=True)
         self.update_config(model_id=new)
+        self.throttle_waits_done = 0
         if new not in self.model_ids_used:
             self.model_ids_used.append(new)
         self.model_switches.append({"from": old, "to": new, "reason": reason})
@@ -126,6 +162,7 @@ class FactoryGeminiModel(GeminiModel):
                         held = None
                     yielded = True
                     self.unresponsive_calls = 0
+                    self.throttle_waits_done = 0
                     yield event
                 if held is not None:
                     yield held
@@ -143,6 +180,16 @@ class FactoryGeminiModel(GeminiModel):
                     if not self.fallback_model_ids:
                         raise
                     self._switch_model()
+                    continue
+                if self.throttle_waits_done < self.throttle_waits:
+                    delay = throttle_delay(error, self.throttle_waits_done, self.throttle_wait_max_s)
+                    self.throttle_waits_done += 1
+                    self._record_retry("throttled_wait", self.throttle_waits_done)
+                    print(f"[model] {self.config['model_id']} throttled (per minute); waiting {delay:.0f}s",
+                          file=sys.stderr, flush=True)
+                    if self.on_throttle_wait:
+                        self.on_throttle_wait()
+                    await self.sleep(delay)
                     continue
                 if self._unresponsive("throttled"):
                     continue

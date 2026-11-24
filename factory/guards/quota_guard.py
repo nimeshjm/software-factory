@@ -33,6 +33,10 @@ class QuotaGuard(HookProvider):
         if isinstance(event.exception, ModelThrottledException):
             self.throttles += 1
 
+    def throttle_wait(self) -> None:
+        """Count a per-minute throttle the model waited out itself; strands never sees it, so no call is counted."""
+        self.throttles += 1
+
     def extra_call(self) -> None:
         """Count a request the model re-sent itself (daily-quota fallback) so the cap and the ledger see it."""
         self.calls += 1

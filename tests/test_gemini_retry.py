@@ -7,7 +7,8 @@ from google.genai import errors as genai_errors
 from strands.models.gemini import GeminiModel
 from strands.types.exceptions import ModelThrottledException
 
-from factory.gemini import FactoryGeminiModel, is_daily_quota_error, is_retryable_server_error, unresponsive_reason
+from factory.gemini import (FactoryGeminiModel, is_daily_quota_error, is_retryable_server_error, throttle_delay,
+                            unresponsive_reason)
 
 
 def _server_error(code: int, status: str) -> genai_errors.ServerError:
@@ -45,9 +46,10 @@ def test_classifier():
     assert not is_retryable_server_error(ValueError("x"))
 
 
-def _quota_error(quota_id: str, message: str = "Quota exceeded") -> ModelThrottledException:
+def _quota_error(quota_id: str, message: str = "Quota exceeded", retry_delay: str | None = None) -> ModelThrottledException:
+    extra = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}] if retry_delay else []
     details = {"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED", "details": [
-        {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": quota_id}]}]}}
+        {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{"quotaId": quota_id}]}, *extra]}}
     err = ModelThrottledException(message)
     err.__cause__ = genai_errors.ClientError(429, details)
     return err
@@ -67,8 +69,10 @@ def test_is_daily_quota_error():
     assert not is_daily_quota_error(ValueError("x"))
 
 
-def _fallback_model(monkeypatch, errors, fallbacks):
-    """Model whose underlying stream raises the next of `errors` per call (None = succeed); records the model id used."""
+def _fallback_model(monkeypatch, errors, fallbacks, throttle_waits=0):
+    """Model whose underlying stream raises the next of `errors` per call (None = succeed); records the model id used.
+
+    throttle_waits defaults to 0 so the per-minute tests below exercise the switch path; the wait tests pass it."""
     used = []
     pending = list(errors)
 
@@ -80,7 +84,15 @@ def _fallback_model(monkeypatch, errors, fallbacks):
         yield {"ok": True}
 
     monkeypatch.setattr(GeminiModel, "stream", fake)
-    model = FactoryGeminiModel(client_args={"api_key": "x"}, model_id="a", fallback_model_ids=fallbacks)
+    model = FactoryGeminiModel(client_args={"api_key": "x"}, model_id="a", fallback_model_ids=fallbacks,
+                               throttle_waits=throttle_waits)
+    slept: list[float] = []
+
+    async def no_sleep(delay):
+        slept.append(delay)
+
+    model.sleep = no_sleep
+    model.slept = slept
     return model, used
 
 
@@ -316,3 +328,49 @@ def test_failure_after_content_emits_no_retry_event(monkeypatch, span):
     with pytest.raises(ModelThrottledException):
         _drain(model)
     assert span.events == []
+
+
+def test_throttle_delay():
+    assert throttle_delay(_quota_error(MINUTE, retry_delay="23s"), 0, 65) == 24.0
+    assert throttle_delay(_quota_error(MINUTE, retry_delay="120s"), 0, 65) == 65
+    assert throttle_delay(ModelThrottledException("Please retry in 9.5s."), 0, 65) == 10.5
+    assert [throttle_delay(_quota_error(MINUTE), n, 65) for n in range(4)] == [15.0, 30.0, 60.0, 65]
+
+
+def test_per_minute_throttle_waits_on_the_same_model(monkeypatch, capsys, span):
+    model, used = _fallback_model(monkeypatch, [_quota_error(MINUTE, retry_delay="20s")] * 2 + [None], ["b"],
+                                  throttle_waits=3)
+    waits = []
+    model.on_throttle_wait = lambda: waits.append(1)
+    assert _drain(model) == [{"ok": True}]
+    assert used == ["a", "a", "a"] and model.model_switches == [] and model.slept == [21.0, 21.0]
+    assert len(waits) == 2 and model.throttle_waits_done == 0 and model.unresponsive_calls == 0
+    assert span.events == [_retry("a", "throttled_wait", 1), _retry("a", "throttled_wait", 2)]
+    assert "[model] a throttled (per minute); waiting 21s" in capsys.readouterr().err
+
+
+def test_throttle_waits_exhausted_then_switches(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_quota_error(MINUTE)] * 4 + [_quota_error(MINUTE), None], ["b"],
+                                  throttle_waits=3)
+    with pytest.raises(ModelThrottledException):
+        _drain(model)  # three waits, then the fourth throttle counts as unresponsive and is raised to strands
+    assert used == ["a"] * 4 and model.slept == [15.0, 30.0, 60.0] and model.unresponsive_calls == 1
+    assert _drain(model) == [{"ok": True}]  # strands' retry: no waits left, second unresponsive switches
+    assert used == ["a"] * 5 + ["b"]
+    assert model.model_switches == [{"from": "a", "to": "b", "reason": "unresponsive:throttled"}]
+    assert model.throttle_waits_done == 0
+
+
+def test_daily_quota_does_not_wait(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_quota_error(DAILY, retry_delay="80000s"), None], ["b"],
+                                  throttle_waits=3)
+    assert _drain(model) == [{"ok": True}]
+    assert used == ["a", "b"] and model.slept == []
+
+
+def test_throttle_wait_counts_a_throttle_not_a_call():
+    from factory.guards import GuardLog, QuotaGuard
+
+    q = QuotaGuard(5, GuardLog())
+    q.throttle_wait()
+    assert (q.calls, q.throttles) == (0, 1)
