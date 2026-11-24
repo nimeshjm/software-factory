@@ -81,3 +81,18 @@ def test_run_writes_tool_calls(tmp_path, ws, monkeypatch):
     calls = [c for c in res["tool_calls"] if c["name"] in ("read_file", "list_files")]
     assert [c["name"] for c in calls] == ["read_file", "list_files"]
     assert calls[0]["status"] == "blocked" and calls[0]["http_status"] is None
+
+
+def test_result_size_on_the_entry_and_the_span_event(monkeypatch):
+    events = []
+
+    class _Span:
+        def add_event(self, name, attrs):
+            events.append((name, attrs))
+
+    monkeypatch.setattr("opentelemetry.trace.get_current_span", lambda: _Span())
+    c = _one("read_file", {"path": "a.py"}, "x" * 1001)
+    assert c["result_chars"] == 1001
+    name, attrs = events[0]
+    assert name == "factory.tool_call"
+    assert attrs["factory.tool.result_chars"] == 1001 and attrs["factory.tool.result_tokens"] == 251

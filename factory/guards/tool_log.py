@@ -75,8 +75,11 @@ class ToolCallLog(HookProvider):
             m = HTTP_RE.match(text)
             http_status = int(m.group(1)) if m else None
         target = redact(_target(name, event.tool_use.get("input"), text, status, http_status))[:TARGET_MAX]
+        # The result as it enters the context: AfterToolCallEvent runs callbacks in reverse registration order,
+        # so ContextGuard's truncation and EditGuard's note are already applied here.
+        result_chars = len(text)
         entry = {"name": name, "target": target, "status": status, "http_status": http_status,
-                 "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                 "result_chars": result_chars, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         with self._lock:
             if len(self.calls) < MAX_CALLS:
                 self.calls.append(entry)
@@ -85,7 +88,8 @@ class ToolCallLog(HookProvider):
             from opentelemetry import trace
 
             attrs: dict[str, Any] = {"factory.tool.name": name, "factory.tool.target": target,
-                                     "factory.tool.status": status}
+                                     "factory.tool.status": status, "factory.tool.result_chars": result_chars,
+                                     "factory.tool.result_tokens": (result_chars + 3) // 4}
             if http_status is not None:
                 attrs["factory.tool.http_status"] = http_status
             # Strands ends the execute_tool span before AfterToolCallEvent fires, so the current span is the

@@ -178,6 +178,7 @@ class ToolCall(_Base):
     target: str = ""
     status: Literal["ok", "error", "blocked"]
     http_status: int | None = None
+    result_chars: int = 0  # size of the result as it entered the context (after truncation)
     ts: str
 
 
