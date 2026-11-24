@@ -565,3 +565,55 @@ describe("html (new UI — ?ui=new)", () => {
     }
   });
 });
+
+describe("costs", () => {
+  const runs = [
+    run({ id: "a", agent: "builder", status: "success", dispatched_at: "2026-11-12T09:00:00Z", finished_at: "2026-11-12T09:30:00Z", paid_cost_usd: 0.12345 }),
+    run({ id: "b", agent: "reviewer", status: "success", dispatched_at: "2026-11-12T10:00:00Z", finished_at: "2026-11-12T10:05:00Z", paid_cost_usd: 0 }),
+    run({ id: "c", agent: "reviewer", status: "failed", dispatched_at: "2026-11-11T10:00:00Z", finished_at: "2026-11-11T10:05:00Z", paid_cost_usd: 0.05 }),
+    run({ id: "d", agent: "builder", status: "started", dispatched_at: "2026-11-12T13:30:00Z", paid_reserved_usd: 0.3 }),
+  ];
+  const paid = { cap: 0.5, runCap: 0.3, blocked: false };
+
+  it("sums today's spend and reservations against the cap, by day and by agent", () => {
+    const c = buildDashboard(input({ runs, paid })).costs;
+    expect(c.today).toMatchObject({ spent_usd: 0.1235, reserved_usd: 0.3, cap_usd: 0.5, remaining_usd: 0.0766, run_cap_usd: 0.3, blocked: false, exhausted: false });
+    expect(c.today.resets_at).toBe("2026-11-13T00:00:00.000Z");
+    expect(c.window_usd).toBe(0.1735);
+    expect(c.by_day.find((x) => x.day === "2026-11-11")?.usd).toBe(0.05);
+    expect(c.by_day.find((x) => x.day === "2026-11-12")?.usd).toBe(0.1235);
+    expect(c.by_agent).toEqual([
+      { agent: "builder", usd: 0.1235, runs: 2, paid_runs: 1 },
+      { agent: "reviewer", usd: 0.05, runs: 2, paid_runs: 1 },
+    ]);
+    expect(buildDashboard(input({ runs, paid })).happened.runs.find((r) => r.run_id === "a")?.paid_cost_usd).toBe(0.1235);
+  });
+
+  it("without a paid key the cap is 0 and nothing is blocked", () => {
+    const d = buildDashboard(input({ runs: [] }));
+    expect(d.costs.today).toMatchObject({ spent_usd: 0, cap_usd: 0, blocked: false, exhausted: false });
+    expect(d.blocked.some((b) => b.kind.startsWith("paid-"))).toBe(false);
+  });
+
+  it("shows a human card when the paid key is blocked and a waiting card when the budget is spent", () => {
+    const spent = [run({ id: "x", status: "failed", stop_reason: "paid_budget", dispatched_at: "2026-11-12T12:00:00Z", finished_at: "2026-11-12T12:10:00Z", paid_cost_usd: 0.5 })];
+    const d = buildDashboard(input({ runs: spent, paid: { ...paid, blocked: true } }));
+    const kinds = d.blocked.map((b) => [b.kind, b.needs_human]);
+    expect(kinds).toContainEqual(["paid-blocked", true]);
+    expect(kinds).toContainEqual(["paid-budget", false]);
+    expect(d.blocked.find((b) => b.kind === "paid-budget")?.title).toBe("Paid budget spent: $0.50 of $0.50 today");
+  });
+
+  it("renders the tile, panel and run column in both UIs", () => {
+    const d = buildDashboard(input({ runs, paid }));
+    for (const html of [dashboardHtmlLegacy(d), dashboardHtmlNext(d)]) {
+      expect(html).toContain("Paid spend today");
+      expect(html).toContain("Paid spend: $0.17 in 48 h");
+      expect(html).toContain('id="p-costs"');
+      expect(html).toContain("$0.12");
+      expect(html).toContain(">paid<");
+    }
+    expect(dashboardHtmlNext(d)).toContain('aria-label="Estimated paid spend per UTC day"');
+    expect(dashboardHtmlLegacy(buildDashboard(input()))).toContain("no paid key");
+  });
+});

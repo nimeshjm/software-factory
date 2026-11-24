@@ -58,6 +58,12 @@ export function subjectLink(repo: string, subject: string, issue: number | null,
 }
 
 /** A long title, cut to one line with the full text on hover. */
+/** Estimated USD: 2 decimals, or 4 below one cent so small paid spend still shows; 0 is "$0". */
+export function money(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "$0";
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+
 export const trunc = (s: string): string => `<span class="trunc" title="${esc(s)}">${esc(s)}</span>`;
 
 /** UTC clock time with the relative time beside it. */

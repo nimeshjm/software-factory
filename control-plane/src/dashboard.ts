@@ -1,6 +1,6 @@
 // GET /dashboard: what happened, what is blocked, what happens next. Read-only.
 // buildDashboard and dashboardHtml are pure (unit-tested); handleDashboard does the I/O.
-import { agentSpec, AGENT_SPECS, dailyQuota, maxOpenFactoryPrs } from "./config";
+import { agentSpec, AGENT_SPECS, dailyPaidCap, dailyQuota, maxOpenFactoryPrs, runPaidCap } from "./config";
 import type { GhIssue, GhPR } from "./github";
 import { listIssues, listMergeBlockers, listOpenPRs } from "./github";
 import {
@@ -18,7 +18,7 @@ import {
   type PRInfo,
   type RecentRun,
 } from "./preflight";
-import { computeQuota, isPaused } from "./quota";
+import { computePaidBudget, computeQuota, isPaused, paidExhausted, utcMonth } from "./quota";
 import type { Env, RunRow } from "./types";
 import { IN_FLIGHT_STATUSES } from "./types";
 import { json, startOfUtcDay } from "./util";
@@ -62,6 +62,8 @@ export interface DashboardInput {
   githubError: string | null;
   /** Blockers parsed from each `merge:blocked` PR's factory comment, by PR number; null or missing when unreadable. */
   mergeBlockers?: Record<number, string[] | null>;
+  /** Daily paid budget (CONTRACTS.md, Daily paid budget); missing = no paid key configured (cap 0). */
+  paid?: { cap: number; runCap: number; blocked: boolean };
 }
 
 export type BlockKind =
@@ -82,16 +84,18 @@ export type BlockKind =
   | "needs-human-pr"
   | "bugs-first"
   | "backpressure"
-  | "quota";
+  | "quota"
+  | "paid-blocked"
+  | "paid-budget";
 
 const BLOCK_ORDER: BlockKind[] = [
   "paused", "overdue-run", "stuck-in-progress", "orphan-in-review", "failed-run", "failure-cap", "plan-review", "needs-human",
-  "merge-blocked", "awaiting-risk", "author-not-trusted", "blocked-by", "backoff", "lit-pr", "needs-human-pr", "bugs-first", "backpressure", "quota",
+  "merge-blocked", "awaiting-risk", "author-not-trusted", "blocked-by", "backoff", "lit-pr", "needs-human-pr", "bugs-first", "backpressure", "quota", "paid-blocked", "paid-budget",
 ];
 /** Kinds a human has to act on; the rest clear on their own (a dependency closes, the day rolls over). */
 const HUMAN_KINDS = new Set<BlockKind>([
   "paused", "stuck-in-progress", "orphan-in-review", "failed-run", "failure-cap", "plan-review", "needs-human", "merge-blocked", "awaiting-risk",
-  "author-not-trusted", "lit-pr", "needs-human-pr", "backpressure",
+  "author-not-trusted", "lit-pr", "needs-human-pr", "backpressure", "paid-blocked",
 ]);
 
 export interface Blocker {
@@ -125,6 +129,8 @@ export interface RunSummary {
   issue_number: number | null;
   pr_number: number | null;
   workflow_run_url: string | null;
+  /** Estimated paid-key spend in USD (0 on the free key or when the run reported none). */
+  paid_cost_usd: number;
 }
 
 export interface QueueItem {
@@ -164,8 +170,22 @@ export interface DashboardDoc {
       closed_prs: { number: number; title: string; closed_at: string; author: string; url: string | null }[];
     };
   };
+  /** Estimated paid-key spend (token usage x billing.prices_usd_per_m); the free key costs nothing. */
+  costs: {
+    today: {
+      spent_usd: number; reserved_usd: number; cap_usd: number; remaining_usd: number; run_cap_usd: number;
+      blocked: boolean; exhausted: boolean; resets_at: string;
+    };
+    window_usd: number;
+    by_day: { day: string; usd: number }[];
+    by_agent: { agent: string; usd: number; runs: number; paid_runs: number }[];
+  };
   github_error: string | null;
 }
+
+/** USD to 4 decimals for display and JSON; costs are estimates, so more precision only adds noise. */
+export const usd4 = (n: number): number => Math.round(n * 10_000) / 10_000;
+const paidOf = (r: RunRow): number => (typeof r.paid_cost_usd === "number" && Number.isFinite(r.paid_cost_usd) ? r.paid_cost_usd : 0);
 
 // ------------------------------------------------------------------ helpers
 
@@ -243,6 +263,8 @@ export function humanTodo(kind: BlockKind, subject: string): string {
     case "bugs-first": return "Nothing to do unless the bug can wait: label it needs-human to let the builder move on.";
     case "backpressure": return "Merge or close one of the open factory PRs so the builder can start another.";
     case "quota": return "Nothing to do: the daily model-call quota resets at midnight UTC.";
+    case "paid-blocked": return "Top up the Gemini prepay balance or raise the spend cap in AI Studio, then resume the factory to use the paid key again.";
+    case "paid-budget": return "Nothing to do: the paid budget resets at midnight UTC and the free key's quota around 08:00 UTC.";
   }
 }
 
@@ -297,6 +319,7 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
     model_calls: r.model_calls, dispatched_at: r.dispatched_at, started_at: r.started_at, finished_at: r.finished_at,
     duration_min: minutesBetween(r.started_at ?? r.dispatched_at, r.finished_at),
     issue_number: r.issue_number, pr_number: r.pr_number, workflow_run_url: r.workflow_run_url,
+    paid_cost_usd: usd4(paidOf(r)),
   }));
   const counts: Record<string, Record<string, number>> = {};
   for (const r of windowRuns) {
@@ -312,6 +335,33 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
     byDay.set(day, (byDay.get(day) ?? 0) + r.model_calls);
   }
   const calls_by_day = [...byDay.entries()].map(([day, calls]) => ({ day, calls }));
+
+  // ---- costs: paid spend by finish day and by agent, and today's budget
+  const usdByDay = new Map([...byDay.keys()].map((day) => [day, 0]));
+  const byAgent = new Map<string, { usd: number; runs: number; paid_runs: number }>();
+  for (const r of windowRuns) {
+    const a = byAgent.get(r.agent) ?? { usd: 0, runs: 0, paid_runs: 0 };
+    a.runs += 1;
+    const cost = paidOf(r);
+    if (cost > 0) a.paid_runs += 1;
+    a.usd += cost;
+    byAgent.set(r.agent, a);
+    if (r.finished_at && r.finished_at >= windowStart) usdByDay.set(r.finished_at.slice(0, 10), (usdByDay.get(r.finished_at.slice(0, 10)) ?? 0) + cost);
+  }
+  const paidCfg = input.paid ?? { cap: 0, runCap: 0, blocked: false };
+  const budget = computePaidBudget(input.runs, now, paidCfg.cap, paidCfg.runCap, paidCfg.blocked);
+  const costs: DashboardDoc["costs"] = {
+    today: {
+      spent_usd: usd4(budget.spentToday), reserved_usd: usd4(budget.reservedInFlight), cap_usd: paidCfg.cap,
+      remaining_usd: usd4(Math.max(0, paidCfg.cap - budget.spentToday - budget.reservedInFlight)), run_cap_usd: paidCfg.runCap,
+      blocked: paidCfg.blocked, exhausted: paidExhausted(budget),
+      resets_at: new Date(Date.parse(startOfUtcDay(now)) + 86_400_000).toISOString(),
+    },
+    window_usd: usd4([...usdByDay.values()].reduce((a, b) => a + b, 0)),
+    by_day: [...usdByDay.entries()].map(([day, usd]) => ({ day, usd: usd4(usd) })),
+    by_agent: [...byAgent.entries()].map(([agent, v]) => ({ agent, usd: usd4(v.usd), runs: v.runs, paid_runs: v.paid_runs }))
+      .sort((a, b) => b.usd - a.usd || a.agent.localeCompare(b.agent)),
+  };
 
   // ---- happened: target movement
   const since = input.updatedSince ?? [];
@@ -518,6 +568,20 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
       action: `Nothing to do: the daily ceiling (${input.dailyQuota}) resets at ${resets.toISOString()}.`, url: null,
     });
   }
+  if (costs.today.blocked) {
+    add({
+      kind: "paid-blocked", subject: "factory", title: `Paid Gemini key blocked for ${utcMonth(now)}`,
+      reason: "A run hit the prepay balance or the monthly spend cap. Runs continue on the free key only, and stop when its daily quota runs out.",
+      action: 'curl -X POST -H "Authorization: Bearer $FACTORY_TOKEN" $FACTORY_URL/admin/resume', url: null,
+    });
+  }
+  if (costs.today.exhausted) {
+    add({
+      kind: "paid-budget", subject: "factory", title: `Paid budget spent: $${costs.today.spent_usd.toFixed(2)} of $${paidCfg.cap.toFixed(2)} today`,
+      reason: "A run stopped because the free quota was used up and today's paid budget was too. Ticks dispatch nothing until one of them resets.",
+      action: `Nothing to do: the paid budget resets at ${costs.today.resets_at}; raise billing.daily_paid_cap_usd to spend more.`, url: null,
+    });
+  }
   blocked.sort((a, b) => BLOCK_ORDER.indexOf(a.kind) - BLOCK_ORDER.indexOf(b.kind) || a.subject.localeCompare(b.subject));
 
   // ---- next
@@ -581,6 +645,7 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
     blocked,
     next: { next_tick_at: nextTickAt(now).toISOString(), queue, scheduled, last_tick },
     happened: { runs, counts, calls_by_day, target },
+    costs,
     github_error: input.githubError,
   };
 }
@@ -600,12 +665,13 @@ export async function handleDashboard(req: Request, env: Env): Promise<Response>
   const ui = resolveUi(url.searchParams.get("ui"));
   const since = new Date(now.getTime() - windowHours * 3600_000).toISOString();
   const floor = since < startOfUtcDay(now) ? since : startOfUtcDay(now);
-  const [runs, lt, paused] = await Promise.all([
+  const [runs, lt, paused, paidBlocked] = await Promise.all([
     env.DB.prepare("SELECT * FROM runs WHERE status IN ('dispatched','started') OR dispatched_at >= ? OR finished_at >= ? ORDER BY dispatched_at DESC LIMIT 500")
       .bind(floor, floor)
       .all<RunRow>(),
     env.DB.prepare("SELECT value FROM config WHERE key = 'last_tick'").first<{ value: string }>(),
     isPaused(env),
+    env.DB.prepare("SELECT value FROM config WHERE key = 'paid_blocked_month'").first<{ value: string }>(),
   ]);
   let openIssues: GhIssue[] | null = null;
   let openPRs: GhPR[] | null = null;
@@ -631,6 +697,7 @@ export async function handleDashboard(req: Request, env: Env): Promise<Response>
   const doc = buildDashboard({
     now, windowHours, paused, lastTick: lt?.value ?? null, dailyQuota: dailyQuota(env), maxOpenFactoryPrs: maxOpenFactoryPrs(env),
     runs: runs.results ?? [], openIssues, openPRs, updatedSince, targetRepo: env.TARGET_REPO, githubError, mergeBlockers,
+    paid: { cap: dailyPaidCap(env), runCap: runPaidCap(env), blocked: paidBlocked?.value === utcMonth(now) },
   });
   const wantsHtml = url.searchParams.get("format") !== "json" && (req.headers.get("accept") ?? "").includes("text/html");
   const headers = { "cache-control": "public, max-age=60" };

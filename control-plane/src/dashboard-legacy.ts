@@ -7,6 +7,7 @@ import {
   dashboardHref,
   esc,
   link,
+  money,
   STORAGE_PREFIX,
   subjectLink,
   tokens,
@@ -75,6 +76,18 @@ D.addEventListener("visibilitychange",function(){if(D.hidden)stop();else start()
 start();
 })();</script>`;
 
+/** Paid spend panel: per day as bars (with the daily cap), per agent as a table. Estimates from token usage. */
+function costsLegacy(d: DashboardDoc): string {
+  const c = d.costs;
+  const max = Math.max(c.today.cap_usd, ...c.by_day.map((x) => x.usd), 0.0001);
+  const bars = c.by_day
+    .map((x) => `<div class="bar1" title="${x.day}: ${money(x.usd)}"><div style="height:${Math.round((x.usd / max) * 100)}%"></div><span>${x.day.slice(5)}</span><b>${money(x.usd)}</b></div>`)
+    .join("");
+  const rows = c.by_agent.map((a) => [esc(a.agent), money(a.usd), String(a.paid_runs), String(a.runs)]);
+  return `<p class="dim">Estimated from token usage and billing.prices_usd_per_m; runs on the free key cost nothing. Daily cap ${money(c.today.cap_usd)}, per run ${money(c.today.run_cap_usd)}, resets ${clock(c.today.resets_at)} UTC.</p>
+<div class="bars">${bars}</div><div class="wrap">${table(["agent", "paid", "paid runs", "runs"], rows, [1, 2, 3])}</div>`;
+}
+
 export function dashboardHtmlLegacy(d: DashboardDoc): string {
   const now = new Date(d.generated_at);
   const repo = d.target_repo;
@@ -91,6 +104,9 @@ export function dashboardHtmlLegacy(d: DashboardDoc): string {
     ["In flight", String(d.in_flight.length), d.in_flight.some((f) => f.overdue) ? "one or more overdue" : d.in_flight.map((f) => f.agent).join(", ") || "idle"],
     [`Runs, last ${d.window_hours} h`, String(d.happened.runs.length), failed ? `${failed} failed` : "no failures"],
     ["Model calls today", `${used} <span class="dim">/ ${d.today.quota}</span>`, `<div class="meter"><div style="width:${pct}%"></div></div>${d.today.model_calls} used, ${d.today.reserved} reserved, ${d.today.remaining} left`],
+    ["Paid spend today", `${money(d.costs.today.spent_usd + d.costs.today.reserved_usd)} <span class="dim">/ ${money(d.costs.today.cap_usd)}</span>`, d.costs.today.cap_usd > 0
+      ? `<div class="meter"><div style="width:${Math.min(100, Math.round(((d.costs.today.spent_usd + d.costs.today.reserved_usd) / d.costs.today.cap_usd) * 100))}%"></div></div>${money(d.costs.today.spent_usd)} spent, ${money(d.costs.today.reserved_usd)} reserved${d.costs.today.blocked ? `, <span class="pill bad">paid key blocked</span>` : ""}`
+      : "no paid key"],
     ["Shipped", String(d.happened.target.merged_prs.length + d.happened.target.closed_issues.length), `${d.happened.target.merged_prs.length} PRs merged, ${d.happened.target.closed_issues.length} issues closed`],
   ]
     .map(([l, v, s]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></div>`)
@@ -169,6 +185,7 @@ export function dashboardHtmlLegacy(d: DashboardDoc): string {
     pill(r.status) + (r.stop_reason && r.stop_reason !== "end_turn" ? ` <span class="dim">${esc(r.stop_reason)}</span>` : ""),
     r.duration_min === null ? "" : `${r.duration_min} min`,
     String(r.model_calls),
+    r.paid_cost_usd > 0 ? money(r.paid_cost_usd) : "",
     link(r.workflow_run_url, r.workflow_run_url ? "log" : ""),
   ]);
   const agents = Object.keys(d.happened.counts).sort();
@@ -191,8 +208,9 @@ ${panel("p-scheduled", 3, "Scheduled", d.next.scheduled.length, true, `<div clas
   const happenedBody = [
     panel("p-movement", 3, "Target movement", movement.length, false, `<div class="wrap">${table(["when (UTC)", "", "what", "title", ""], movement)}</div>`),
     panel("p-calls", 3, "Model calls per day", d.happened.calls_by_day.length, false, `<div class="bars">${bars}</div>`),
+    panel("p-costs", 3, `Paid spend: ${money(d.costs.window_usd)} in ${d.window_hours} h`, d.costs.by_agent.filter((a) => a.usd > 0).length, false, costsLegacy(d)),
     panel("p-counts", 3, "Runs by agent", agents.length, false, `<div class="wrap">${table(["agent", ...statuses], countRows, statuses.map((_, i) => i + 1))}</div>`),
-    panel("p-runs", 3, "Runs", d.happened.runs.length, false, `<div class="wrap">${table(["dispatched (UTC)", "agent", "subject", "trigger", "outcome", "took", "calls", ""], runRows, [5, 6])}</div>`),
+    panel("p-runs", 3, "Runs", d.happened.runs.length, false, `<div class="wrap">${table(["dispatched (UTC)", "agent", "subject", "trigger", "outcome", "took", "calls", "paid", ""], runRows, [5, 6, 7])}</div>`),
   ].join("\n");
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

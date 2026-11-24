@@ -6,6 +6,7 @@ import {
   dashboardHref,
   esc,
   link,
+  money,
   subjectLink,
   tokens,
   trunc,
@@ -166,10 +167,22 @@ function renderTable(head: string[], rows: string[][], num: number[] = [], rowAt
   return `<table>${thead}${tbody}</table>`;
 }
 
-function renderCallsSvg(days: { day: string; calls: number }[], quota: number): string {
+interface BarSvgOpts {
+  fmt: (v: number) => string;
+  aria: string;
+  lineLabel: string;
+  unit: string;
+  minMax: number;
+  /** Always draw the line (and scale to it), e.g. a budget cap; otherwise only when it is near the bars. */
+  alwaysLine?: boolean;
+}
+
+const CALLS_SVG: BarSvgOpts = { fmt: (v) => String(Math.round(v)), aria: "Model calls per UTC day", lineLabel: "quota", unit: "calls", minMax: 1 };
+
+function renderCallsSvg(days: { day: string; calls: number }[], quota: number, opts: BarSvgOpts = CALLS_SVG): string {
   if (!days.length) return `<p class="empty">none</p>`;
-  const maxCalls = Math.max(1, ...days.map((x) => x.calls));
-  const showQuota = quota > 0 && quota <= maxCalls * 1.6;
+  const maxCalls = Math.max(opts.minMax, ...days.map((x) => x.calls));
+  const showQuota = quota > 0 && (opts.alwaysLine === true || quota <= maxCalls * 1.6);
   const maxY = showQuota ? Math.max(maxCalls, quota) : maxCalls;
 
   const padL = 38;
@@ -186,7 +199,7 @@ function renderCallsSvg(days: { day: string; calls: number }[], quota: number): 
   const gridLines = [0, 0.5, 1]
     .map((f) => {
       const y = (padT + plotH * (1 - f)).toFixed(1);
-      const val = Math.round(maxY * f);
+      const val = opts.fmt(maxY * f);
       return `<line x1="${padL}" y1="${y}" x2="${padL + plotW}" y2="${y}" stroke="var(--line2)" stroke-width="1"/><text x="${padL - 6}" y="${y}" text-anchor="end" dominant-baseline="middle" fill="var(--fg2)" font-size="10">${val}</text>`;
     })
     .join("");
@@ -194,7 +207,7 @@ function renderCallsSvg(days: { day: string; calls: number }[], quota: number): 
   const quotaLine = showQuota
     ? (() => {
         const qy = (padT + plotH * (1 - quota / maxY)).toFixed(1);
-        return `<line x1="${padL}" y1="${qy}" x2="${padL + plotW}" y2="${qy}" stroke="var(--warn)" stroke-width="1.25" stroke-dasharray="4 3"/><text x="${padL + plotW}" y="${Number(qy) - 4}" text-anchor="end" fill="var(--warn)" font-size="10" font-weight="600">quota ${quota}</text>`;
+        return `<line x1="${padL}" y1="${qy}" x2="${padL + plotW}" y2="${qy}" stroke="var(--warn)" stroke-width="1.25" stroke-dasharray="4 3"/><text x="${padL + plotW}" y="${Number(qy) - 4}" text-anchor="end" fill="var(--warn)" font-size="10" font-weight="600">${opts.lineLabel} ${opts.fmt(quota)}</text>`;
       })()
     : "";
 
@@ -204,11 +217,11 @@ function renderCallsSvg(days: { day: string; calls: number }[], quota: number): 
       const bx = (cx - barW / 2).toFixed(1);
       const bh = x.calls > 0 ? Math.max(2, (x.calls / maxY) * plotH) : 1;
       const by = (padT + plotH - bh).toFixed(1);
-      return `<g class="svg-bar"><title>${esc(x.day)}: ${x.calls} calls</title><rect x="${bx}" y="${by}" width="${barW}" height="${bh.toFixed(1)}" rx="3" fill="${x.calls > 0 ? "var(--accent)" : "var(--line)"}"/><text x="${cx.toFixed(1)}" y="${(Number(by) - 5).toFixed(1)}" text-anchor="middle" fill="var(--fg)" font-size="10.5" font-weight="600">${x.calls}</text><text x="${cx.toFixed(1)}" y="${padT + plotH + 15}" text-anchor="middle" fill="var(--fg2)" font-size="10.5">${esc(x.day.slice(5))}</text></g>`;
+      return `<g class="svg-bar"><title>${esc(x.day)}: ${opts.fmt(x.calls)} ${opts.unit}</title><rect x="${bx}" y="${by}" width="${barW}" height="${bh.toFixed(1)}" rx="3" fill="${x.calls > 0 ? "var(--accent)" : "var(--line)"}"/><text x="${cx.toFixed(1)}" y="${(Number(by) - 5).toFixed(1)}" text-anchor="middle" fill="var(--fg)" font-size="10.5" font-weight="600">${opts.fmt(x.calls)}</text><text x="${cx.toFixed(1)}" y="${padT + plotH + 15}" text-anchor="middle" fill="var(--fg2)" font-size="10.5">${esc(x.day.slice(5))}</text></g>`;
     })
     .join("");
 
-  return `<div class="chart-wrap"><svg class="calls-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Model calls per UTC day">${gridLines}${quotaLine}${bars}</svg></div>`;
+  return `<div class="chart-wrap"><svg class="calls-svg" viewBox="0 0 ${w} ${h}" style="max-width:${w}px" role="img" aria-label="${opts.aria}">${gridLines}${quotaLine}${bars}</svg></div>`;
 }
 
 function isFailedRun(r: RunSummary): boolean {
@@ -228,6 +241,11 @@ export function dashboardHtmlNext(d: DashboardDoc): string {
   const usedPct = Math.min(100, (d.today.model_calls / quota) * 100);
   const resPct = Math.min(100 - usedPct, (d.today.reserved / quota) * 100);
   const meterTone = totalPct >= 90 ? "var(--bad)" : totalPct >= 75 ? "var(--warn)" : "var(--accent)";
+  const paidCap = Math.max(0.0001, d.costs.today.cap_usd);
+  const paidUsedPct = (d.costs.today.spent_usd / paidCap) * 100;
+  const paidResPct = (d.costs.today.reserved_usd / paidCap) * 100;
+  const paidPct = Math.min(100, Math.round(paidUsedPct + paidResPct));
+  const paidTone = paidPct >= 90 ? "var(--bad)" : paidPct >= 75 ? "var(--warn)" : "var(--accent)";
 
   const tiles = [
     {
@@ -261,6 +279,14 @@ export function dashboardHtmlNext(d: DashboardDoc): string {
       label: "Model calls today",
       value: `${used} <span class="dim quota-den">/ ${d.today.quota}</span>`,
       sub: `<div class="meter" role="progressbar" aria-valuenow="${Math.min(100, totalPct)}" aria-valuemin="0" aria-valuemax="100" aria-label="Daily model call quota"><div class="m-used" style="width:${usedPct.toFixed(1)}%;background:${meterTone}"></div><div class="m-res" style="width:${resPct.toFixed(1)}%"></div></div>${d.today.model_calls} used, ${d.today.reserved} reserved, ${d.today.remaining} left`,
+    },
+    {
+      cls: d.costs.today.blocked || d.costs.today.exhausted ? " tile-alert" : "",
+      label: "Paid spend today",
+      value: `${money(d.costs.today.spent_usd + d.costs.today.reserved_usd)} <span class="dim quota-den">/ ${money(d.costs.today.cap_usd)}</span>`,
+      sub: d.costs.today.cap_usd > 0
+        ? `<div class="meter" role="progressbar" aria-valuenow="${paidPct}" aria-valuemin="0" aria-valuemax="100" aria-label="Daily paid budget"><div class="m-used" style="width:${Math.min(100, paidUsedPct).toFixed(1)}%;background:${paidTone}"></div><div class="m-res" style="width:${Math.min(100 - Math.min(100, paidUsedPct), paidResPct).toFixed(1)}%"></div></div>${money(d.costs.today.spent_usd)} spent, ${money(d.costs.today.reserved_usd)} reserved${d.costs.today.blocked ? `, <span class="bad-txt">paid key blocked</span>` : ""}`
+        : "no paid key",
     },
     {
       cls: "",
@@ -375,6 +401,7 @@ export function dashboardHtmlNext(d: DashboardDoc): string {
     statusPill(r.status) + (r.stop_reason && r.stop_reason !== "end_turn" ? ` <span class="dim">${esc(r.stop_reason)}</span>` : ""),
     r.duration_min === null ? "" : `${r.duration_min} min`,
     String(r.model_calls),
+    r.paid_cost_usd > 0 ? money(r.paid_cost_usd) : `<span class="zero">\u2013</span>`,
     link(r.workflow_run_url, r.workflow_run_url ? "log" : ""),
   ]);
   const runRowAttrs = d.happened.runs.map(
@@ -415,11 +442,22 @@ export function dashboardHtmlNext(d: DashboardDoc): string {
 ${panel("p-scheduled", 3, "Scheduled", d.next.scheduled.length, true, `<div class="wrap">${renderTable(["agent", "when (UTC)", "what"], schedRows)}</div>`)}
 <details id="p-decisions"><summary>Last tick ${d.next.last_tick ? when(d.next.last_tick.at, now) : "never"}: ${(d.next.last_tick?.decisions ?? []).length} decisions</summary><ul>${decisions || "<li>none</li>"}</ul></details>`;
 
+  const costRows = d.costs.by_agent.map((a) => [
+    `<span class="mono">${esc(a.agent)}</span>`,
+    a.usd > 0 ? money(a.usd) : `<span class="zero">$0</span>`,
+    String(a.paid_runs),
+    String(a.runs),
+  ]);
+  const costsBody = `<p class="dim">Estimated from token usage and billing.prices_usd_per_m; runs on the free key cost nothing. Daily cap ${money(d.costs.today.cap_usd)}, per run ${money(d.costs.today.run_cap_usd)}, resets ${clock(d.costs.today.resets_at)} UTC.</p>
+${renderCallsSvg(d.costs.by_day.map((x) => ({ day: x.day, calls: x.usd })), d.costs.today.cap_usd, { fmt: money, aria: "Estimated paid spend per UTC day", lineLabel: "cap", unit: "", minMax: 0.0001, alwaysLine: true })}
+<div class="wrap">${renderTable(["agent", "paid", "paid runs", "runs"], costRows, [1, 2, 3])}</div>`;
+
   const happenedBody = [
     panel("p-movement", 3, "Target movement", movement.length, false, `<div class="wrap">${renderTable(["when (UTC)", "", "what", "title", ""], movement)}</div>`),
     panel("p-calls", 3, "Model calls per day", d.happened.calls_by_day.length, false, renderCallsSvg(d.happened.calls_by_day, d.today.quota)),
+    panel("p-costs", 3, `Paid spend: ${money(d.costs.window_usd)} in ${d.window_hours} h`, d.costs.by_agent.filter((a) => a.usd > 0).length, false, costsBody),
     panel("p-counts", 3, "Runs by agent", agents.length, false, `<div class="wrap">${renderTable(["agent", ...statuses], countRows, statuses.map((_, i) => i + 1))}</div>`),
-    panel("p-runs", 3, "Runs", d.happened.runs.length, false, `${runFilters}<div class="wrap">${renderTable(["dispatched (UTC)", "agent", "subject", "trigger", "outcome", "took", "calls", ""], runRows, [5, 6], runRowAttrs)}</div>`),
+    panel("p-runs", 3, "Runs", d.happened.runs.length, false, `${runFilters}<div class="wrap">${renderTable(["dispatched (UTC)", "agent", "subject", "trigger", "outcome", "took", "calls", "paid", ""], runRows, [5, 6, 7], runRowAttrs)}</div>`),
   ].join("\n");
 
   const statusDot = `<svg class="brand-dot ${d.paused ? "is-paused" : "is-live"}" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="currentColor" opacity="0.2"/><circle cx="6" cy="6" r="3" fill="currentColor"/></svg>`;
@@ -468,7 +506,7 @@ code{font-size:12px}
 .callout{margin:10px 0 0;padding:8px 14px;border-radius:8px;border:1px solid var(--badLine);background:var(--badBg);color:var(--bad);font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}
 .callout a{color:var(--bad);font-weight:600;text-decoration:underline;margin-left:auto}
 
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;margin:14px 0 18px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0 18px}
 .tile{background:var(--elev);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:0}
 .tile-alert{border-color:var(--badLine);border-left:3px solid var(--bad)}
 .tile .label{color:var(--fg2);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;gap:6px}
