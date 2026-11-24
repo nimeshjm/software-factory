@@ -24,7 +24,7 @@ System prompts for the factory's Strands agents. The harness (`factory/agents/`)
 
 ## Propose / act split
 
-Agents propose; pipelines act. The agent process has `GEMINI_API_KEY` (and `HONEYCOMB_QUERY_KEY` for the incident-responder) and nothing else: no GitHub token, no hosting token, no smoke-test token. It can read inputs gathered by pre-steps, edit and test in the workspace (builder, bug-fixer), and emit a proposal. The post-step (`scripts/apply-proposal.sh`) re-validates the proposal, runs the output secret scan, and is the only code that labels, comments, pushes, opens PRs, creates issues or merges. Merge decisions are code (`factory.policy.merge_policy`), not prose.
+Agents propose; pipelines act. The agent process has `GEMINI_API_KEY` and the optional `GEMINI_FREE_API_KEY` (and `HONEYCOMB_QUERY_KEY` for the incident-responder) and nothing else: no GitHub token, no hosting token, no smoke-test token. It can read inputs gathered by pre-steps, edit and test in the workspace (builder, bug-fixer), and emit a proposal. The post-step (`scripts/apply-proposal.sh`) re-validates the proposal, runs the output secret scan, and is the only code that labels, comments, pushes, opens PRs, creates issues or merges. Merge decisions are code (`factory.policy.merge_policy`), not prose.
 
 Consequences for prompt authors:
 - Never tell an agent to push, open a PR, comment or label; tell it what to put in the proposal.

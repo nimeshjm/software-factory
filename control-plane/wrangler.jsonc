@@ -27,6 +27,9 @@
     "FACTORY_REF": "main",
     "DAILY_MODEL_CALLS": "400",
     "MAX_OPEN_FACTORY_PRS": "3",
+    // factory.config.json billing (scripts/check-config-sync.sh); owner-set 2026-11-24
+    "DAILY_PAID_CAP_USD": "0.5",
+    "RUN_PAID_CAP_USD": "0.3",
     "HONEYCOMB_DATASET": "factory"
   }
 }

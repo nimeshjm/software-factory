@@ -40,6 +40,8 @@ export interface TickState {
   maxOpenFactoryPrs: number;
   /** Open issues with no labels at all. */
   unlabeledIssues: number[];
+  /** Free quota and paid budget both gone (quota.ts paidExhausted): dispatch nothing, skip reason paid_budget. */
+  paidExhausted?: boolean;
 }
 
 export interface DispatchInputs {
@@ -250,6 +252,10 @@ export function planTick(state: TickState, now: Date): Decision[] {
     const spec = state.agentSpecs[agent];
     if (!spec) {
       decisions.push({ kind: "skip", agent, reason: "no_spec" });
+      return false;
+    }
+    if (state.paidExhausted) {
+      decisions.push({ kind: "skip", agent, reason: "paid_budget" });
       return false;
     }
     if (spec.maxModelCalls > remaining) {

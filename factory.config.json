@@ -16,6 +16,20 @@
     "objects.githubusercontent.com",
     "api.eu1.honeycomb.io"
   ],
+  "billing": {
+    "enabled": true,
+    "monthly_cap_gbp": 6,
+    "usd_per_gbp": 1.25,
+    "daily_paid_cap_usd": 0.5,
+    "run_paid_cap_usd": 0.3,
+    "prices_source": "Gemini Developer API pricing page (aistudio.google.com/docs/pricing), read 2026-11-24. gemini-3.8-flash is $0.75/$3.75 until 2026-12-31 and $1.50/$7.50 from 2027-01-01; the later price is used. Unknown models are priced at the dearest entry.",
+    "prices_usd_per_m": {
+      "gemini-3.5-flash-lite": {"input": 0.3, "output": 2.5},
+      "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.5},
+      "gemini-3.8-flash": {"input": 1.5, "output": 7.5},
+      "gemini-4-hydrogen": {"input": 1.5, "output": 7.5}
+    }
+  },
   "quota": {
     "daily_model_calls": 400,
     "max_open_factory_prs": 3
@@ -37,7 +51,8 @@
     "strong": {
       "model_id": "gemini-3.5-flash-lite",
       "fallback_model_ids": [
-        "gemini-3.1-flash-lite"
+        "gemini-3.1-flash-lite",
+        "gemini-4-hydrogen"
       ],
       "params": {
         "temperature": 0.2,
@@ -45,14 +60,53 @@
         "thinking_config": {
           "thinking_level": "low"
         }
+      },
+      "paid_model_ids": [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite"
+      ]
+    },
+    "design": {
+      "model_id": "gemini-3.8-flash",
+      "fallback_model_ids": [
+        "gemini-4-hydrogen",
+        "gemini-3.5-flash-lite"
+      ],
+      "paid_model_ids": [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite"
+      ],
+      "params": {
+        "temperature": 0.2,
+        "max_output_tokens": 32768,
+        "thinking_config": {
+          "thinking_level": "high"
+        }
+      }
+    },
+    "review": {
+      "model_id": "gemini-3.8-flash",
+      "fallback_model_ids": [
+        "gemini-4-hydrogen",
+        "gemini-3.5-flash-lite"
+      ],
+      "paid_model_ids": [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite"
+      ],
+      "params": {
+        "temperature": 0.2,
+        "max_output_tokens": 32768,
+        "thinking_config": {
+          "thinking_level": "high"
+        }
       }
     },
     "spike_research": {
       "model_id": "gemini-3.8-flash",
       "fallback_model_ids": [
-        "gemini-3.6-flash",
-        "gemini-3-flash-preview",
-        "gemini-4-hydrogen"
+        "gemini-4-hydrogen",
+        "gemini-3.5-flash-lite"
       ],
       "max_model_calls": 25,
       "params": {
@@ -61,7 +115,11 @@
         "thinking_config": {
           "thinking_level": "high"
         }
-      }
+      },
+      "paid_model_ids": [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite"
+      ]
     },
     "spike": {
       "model_id": "gemini-3.5-flash-lite",
@@ -77,7 +135,11 @@
         "thinking_config": {
           "thinking_level": "high"
         }
-      }
+      },
+      "paid_model_ids": [
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite"
+      ]
     }
   },
   "context": {
@@ -138,7 +200,8 @@
             "output_tokens": 16000
           },
           "max_model_calls": 25,
-          "timeout_minutes": 10
+          "timeout_minutes": 10,
+          "model": "design"
         },
         "plan": {
           "tools": [
@@ -152,7 +215,8 @@
             "output_tokens": 16000
           },
           "max_model_calls": 15,
-          "timeout_minutes": 10
+          "timeout_minutes": 10,
+          "model": "design"
         },
         "implement": {
           "limits": {
@@ -211,7 +275,8 @@
             "output_tokens": 16000
           },
           "max_model_calls": 25,
-          "timeout_minutes": 10
+          "timeout_minutes": 10,
+          "model": "design"
         },
         "plan": {
           "tools": [
@@ -225,7 +290,8 @@
             "output_tokens": 16000
           },
           "max_model_calls": 15,
-          "timeout_minutes": 10
+          "timeout_minutes": 10,
+          "model": "design"
         },
         "implement": {
           "limits": {
@@ -251,7 +317,7 @@
       ]
     },
     "reviewer": {
-      "model": "strong",
+      "model": "review",
       "phases": [
         "review"
       ],

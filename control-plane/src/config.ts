@@ -28,6 +28,18 @@ export function dailyQuota(env: Env): number {
   return Number.isFinite(n) && n > 0 ? n : 400;
 }
 
+/** Daily paid-key budget (USD); 0 when unset or invalid, so no paid spend without a configured cap. */
+export function dailyPaidCap(env: Env): number {
+  const n = Number(env.DAILY_PAID_CAP_USD);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Most one run may reserve of the daily paid budget (USD); defaults to the whole daily cap. */
+export function runPaidCap(env: Env): number {
+  const n = Number(env.RUN_PAID_CAP_USD);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, dailyPaidCap(env)) : dailyPaidCap(env);
+}
+
 export function maxOpenFactoryPrs(env: Env): number {
   const n = Number(env.MAX_OPEN_FACTORY_PRS);
   return Number.isFinite(n) && n > 0 ? n : 3;

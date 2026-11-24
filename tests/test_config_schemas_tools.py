@@ -13,9 +13,17 @@ def test_resolve_overrides():
     cfg = C.load_config()
     r = C.resolve_run_spec(cfg, "builder", "research")
     assert r.tools == ["read_file", "list_files", "search_files", "fetch_url", "web_search"] and r.max_model_calls == 25
-    assert r.fallback_model_ids == ("gemini-3.1-flash-lite",)
-    assert r.model_id == "gemini-3.5-flash-lite" and r.params["thinking_config"]["thinking_level"] == "low"
+    # design (research, plan): 3.8 Flash first; the paid key walks the cheap flash-lite chain
+    assert r.model_key == "design" and r.model_id == "gemini-3.8-flash"
+    assert r.fallback_model_ids == ("gemini-4-hydrogen", "gemini-3.5-flash-lite")
+    assert r.paid_model_ids == ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+    assert r.params["thinking_config"]["thinking_level"] == "high"
     imp = C.resolve_run_spec(cfg, "builder", "implement")
+    assert imp.model_key == "strong" and imp.model_id == "gemini-3.5-flash-lite"
+    assert imp.fallback_model_ids == ("gemini-3.1-flash-lite", "gemini-4-hydrogen")
+    assert imp.params["thinking_config"]["thinking_level"] == "low"
+    rev = C.resolve_run_spec(cfg, "reviewer", "review")
+    assert rev.model_key == "review" and rev.model_id == "gemini-3.8-flash"
     assert "edit_file" in imp.tools and imp.limits["turns"] == 60 and imp.timeout_minutes == 40
     bf = C.resolve_run_spec(cfg, "bug-fixer", "research")
     assert "shell_in_workspace" in bf.tools

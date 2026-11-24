@@ -27,21 +27,31 @@ if [ "$AGENT" = reviewer ] && [ "$PHASES" = review ] && [ -f inputs/pr.json ] \
   echo "::notice::head ${HEAD_SHA:0:12} already has a factory review (verdict $(jq -r .verdict <<<"$reused")); no model call"
   exit 0
 fi
+# The run's paid allowance (out/paid_allowance.txt, from the control plane at "Ledger started"; none = 0) is
+# shared by the phases: each one gets what the earlier ones left (CONTRACTS.md, Daily paid budget).
+run_allowance="$(cat out/paid_allowance.txt 2>/dev/null || echo 0)"
+paid_spent=0
 for phase in "${phase_list[@]}"; do
   export OTEL_RESOURCE_ATTRIBUTES="${OTEL_RESOURCE_ATTRIBUTES_BASE:-},factory.phase=${phase}"
+  PAID_ALLOWANCE_USD="$(jq -n --arg a "$run_allowance" --arg s "$paid_spent" \
+    '[(($a | tonumber? // 0) - ($s | tonumber)), 0] | max')"
+  export PAID_ALLOWANCE_USD
   rm -f out/proposal.json out/result.json
   prc=0
-  uv run --frozen python -m factory.run --agent "$AGENT" --phase "$phase" --inputs inputs/ --out out/ "${dry[@]}" || prc=$?
+  uv run --frozen python -m factory.run --agent "$AGENT" --phase "$phase" --inputs inputs/ --out out/ ${dry[@]+"${dry[@]}"} || prc=$?
   mkdir -p "out/phases/$phase"
   for f in proposal.json result.json research.md plan.md; do
     if [ -f "out/$f" ]; then cp "out/$f" "out/phases/$phase/$f"; fi
   done
+  if [ -f "out/phases/$phase/result.json" ]; then
+    paid_spent="$(jq -r --arg s "$paid_spent" '($s | tonumber) + (.paid_cost_usd // 0)' "out/phases/$phase/result.json")"
+  fi
   if [ "$prc" -ne 0 ]; then
     echo "::error::harness failed for phase $phase (exit $prc)"
     # Say why in the step log, so a dead run can be read without downloading the artifact.
     rj="out/phases/$phase/result.json"
     if [ -f "$rj" ]; then
-      echo "::error::phase $phase result: $(jq -r '"stop_reason=\(.stop_reason // "?") model_calls=\(.model_calls // 0) total_tokens=\(.usage.total_tokens // 0) models=\((.model_ids_used // []) | join(",")) switches=\((.model_switches // []) | map("\(.from)>\(.to) (\(.reason))") | join(", ")) error=\(.error // "")"' "$rj")"
+      echo "::error::phase $phase result: $(jq -r '"stop_reason=\(.stop_reason // "?") model_calls=\(.model_calls // 0) total_tokens=\(.usage.total_tokens // 0) paid_usd=\(.paid_cost_usd // 0) models=\((.model_ids_used // []) | join(",")) switches=\((.model_switches // []) | map("\(.from)>\(.to) (\(.reason))") | join(", ")) error=\(.error // "")"' "$rj")"
     else
       echo "::error::phase $phase wrote no result.json"
     fi

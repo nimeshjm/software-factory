@@ -208,5 +208,9 @@ class RunResult(_Base):
     throttles: int = 0
     model_ids_used: list[str] = Field(default_factory=list)
     model_switches: list[ModelSwitch] = Field(default_factory=list)
+    paid_cost_usd: float = 0.0  # estimated spend on the paid key (billing.prices_usd_per_m)
+    paid_allowance_usd: float = 0.0  # what this phase was allowed to spend on the paid key
+    key_tiers_used: list[str] = Field(default_factory=list)  # "free", "paid", "default", in order of first use
+    free_key: bool = False  # a free-tier key was configured for the run
     error: str | None = None
     dry_run: bool = False

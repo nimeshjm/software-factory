@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,28 @@ def needs_finalize(stop_reason: str, has_proposal: bool, nudged: bool) -> bool:
     return (stop_reason == "end_turn" and nudged) or stop_reason in ("limit_turns", "limit_total_tokens")
 
 
-def _build_model(spec, fake: bool):
+def key_tiers_from_env(cfg: dict[str, Any], env: Mapping[str, str]):
+    """Free key first (GEMINI_FREE_API_KEY, optional), then GEMINI_API_KEY: paid when billing.enabled, else "default"."""
+    from .gemini import KeyTier
+
+    main = env.get("GEMINI_API_KEY") or ""
+    free = env.get("GEMINI_FREE_API_KEY") or ""
+    paid = bool((cfg.get("billing") or {}).get("enabled"))
+    tiers = [KeyTier("free", free, False)] if free else []
+    if main:
+        tiers.append(KeyTier("paid", main, True) if paid else KeyTier("default", main, False))
+    return tiers
+
+
+def paid_allowance_from_env(env: Mapping[str, str]) -> float:
+    """PAID_ALLOWANCE_USD from run-phases.sh; missing or unparseable is 0 (no paid spend)."""
+    try:
+        return max(0.0, float(env.get("PAID_ALLOWANCE_USD") or 0))
+    except ValueError:
+        return 0.0
+
+
+def _build_model(spec, fake: bool, cfg: dict[str, Any] | None = None):
     if fake:
         from .fake_model import FakeModel
 
@@ -53,14 +75,18 @@ def _build_model(spec, fake: bool):
         return FakeModel(script=script)
     from .gemini import FactoryGeminiModel
 
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
+    cfg = cfg or {}
+    tiers = key_tiers_from_env(cfg, os.environ)
+    if not tiers:
         raise RuntimeError("GEMINI_API_KEY is not set")
-    return FactoryGeminiModel(client_args={"api_key": key}, model_id=spec.model_id, params=spec.params,
+    return FactoryGeminiModel(key_tiers=tiers, model_id=spec.model_id, params=spec.params,
+                              paid_allowance_usd=paid_allowance_from_env(os.environ),
+                              prices=(cfg.get("billing") or {}).get("prices_usd_per_m") or {},
                               fallback_model_ids=spec.fallback_model_ids,
                               first_event_timeout_s=spec.first_event_timeout_s,
                               unresponsive_switch_after=spec.unresponsive_switch_after,
-                              throttle_waits=spec.throttle_waits, throttle_wait_max_s=spec.throttle_wait_max_s)
+                              throttle_waits=spec.throttle_waits, throttle_wait_max_s=spec.throttle_wait_max_s,
+                              paid_model_ids=spec.paid_model_ids)
 
 
 def _usage(res) -> dict[str, int]:
@@ -74,13 +100,14 @@ def _metrics_usage(metrics) -> dict[str, int]:
             "total_tokens": int(u.get("totalTokens", 0))}
 
 
-def _billing_blocked(e: BaseException) -> bool:
-    """True when a ModelBillingError is anywhere in the chain (strands wraps it in EventLoopException)."""
-    from .gemini import ModelBillingError
+def _in_chain(e: BaseException, name: str) -> bool:
+    """True when a `factory.gemini.<name>` error is anywhere in the chain (strands wraps it in EventLoopException)."""
+    from . import gemini
 
+    cls = getattr(gemini, name)
     seen: set[int] = set()
     while e is not None and id(e) not in seen:
-        if isinstance(e, ModelBillingError):
+        if isinstance(e, cls):
             return True
         seen.add(id(e))
         e = e.__cause__ or e.__context__
@@ -135,6 +162,7 @@ def run(args: argparse.Namespace) -> int:
     latency: LatencyGuard | None = None
     tool_log: ToolCallLog | None = None
     agent: Any = None
+    model: Any = None
     result = RunResult(run_id=str(run_id), agent=args.agent, phase=args.phase, success=False,
                        stop_reason="not_started", dry_run=bool(args.dry_run))
     try:
@@ -177,7 +205,7 @@ def run(args: argparse.Namespace) -> int:
                                        "factory.dry_run": bool(args.dry_run)}
         if run_json.get("issue_number") is not None:
             trace_attrs["work_tracker.issue_id"] = str(run_json["issue_number"])
-        model = _build_model(spec, args.fake_model)
+        model = _build_model(spec, args.fake_model, cfg)
         model_ids_used = getattr(model, "model_ids_used", None)
         if model_ids_used is not None:
             result.model_ids_used = model_ids_used
@@ -242,8 +270,10 @@ def run(args: argparse.Namespace) -> int:
             result.stop_reason = "timeout"
         elif quota is not None and quota.capped:
             result.stop_reason = "quota_cap"
-        elif _billing_blocked(e):
+        elif _in_chain(e, "ModelBillingError"):
             result.stop_reason = "billing_blocked"
+        elif _in_chain(e, "ModelPaidBudgetError"):
+            result.stop_reason = "paid_budget"
         else:
             result.stop_reason = "exception"
         result.error = redact(f"{type(e).__name__}: {e}")[:1000]
@@ -256,6 +286,11 @@ def run(args: argparse.Namespace) -> int:
             latency.stop()
         result.model_calls = quota.calls if quota else 0
         result.throttles = quota.throttles if quota else 0
+        if model is not None and getattr(model, "key_tiers", None):
+            result.paid_cost_usd = round(model.paid_cost_usd, 6)
+            result.paid_allowance_usd = model.paid_allowance_usd
+            result.key_tiers_used = list(model.tiers_used)
+            result.free_key = any(t.name == "free" for t in model.key_tiers)
         result.duration_s = round(time.monotonic() - started, 2)
         result.model_switches = [ModelSwitch.model_validate(s) for s in result.model_switches]  # live dicts from the model
         result.guard_events = [GuardEvent(**e) for e in log.events]

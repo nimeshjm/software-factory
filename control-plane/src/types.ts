@@ -9,6 +9,9 @@ export interface Env {
   DAILY_MODEL_CALLS: string;
   MAX_OPEN_FACTORY_PRS: string;
   HONEYCOMB_DATASET: string;
+  /** Daily paid-key budget in USD and the most one run may reserve (factory.config.json billing). */
+  DAILY_PAID_CAP_USD: string;
+  RUN_PAID_CAP_USD: string;
   // secrets
   FACTORY_APP_ID: string;
   FACTORY_APP_PRIVATE_KEY: string;
@@ -57,4 +60,7 @@ export interface RunRow {
   model_calls: number;
   reserved_calls: number;
   workflow_run_url: string | null;
+  /** Estimated paid-key spend reported at finished, and the allowance handed out at started (migration 0003). */
+  paid_cost_usd?: number;
+  paid_reserved_usd?: number;
 }

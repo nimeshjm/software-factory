@@ -414,3 +414,127 @@ def test_other_client_errors_pass_through(monkeypatch):
                                                                                       "status": "INVALID_ARGUMENT"}})], ["b"])
     with pytest.raises(genai_errors.ClientError):
         _drain(model)
+
+
+# --- key tiers and the paid budget -------------------------------------------------------------------------
+
+from factory.gemini import KeyTier, ModelPaidBudgetError, request_cost_usd  # noqa: E402
+
+PRICES = {"a": {"input": 1.0, "output": 10.0}, "b": {"input": 2.0, "output": 20.0}}
+FREE, PAID = KeyTier("free", "kf", False), KeyTier("paid", "kp", True)
+
+
+def _usage_event(inp, out):
+    return {"metadata": {"usage": {"inputTokens": inp, "outputTokens": out, "totalTokens": inp + out}}}
+
+
+def _tier_model(monkeypatch, errors, tiers, allowance=1.0, fallbacks=("b",), usage=(1000, 100)):
+    """Like _fallback_model; records (key, model) per request; a success yields content plus usage metadata."""
+    used = []
+    pending = list(errors)
+
+    async def fake(self, *a, **k):
+        used.append((self.client_args["api_key"], self.config["model_id"]))
+        exc = pending.pop(0) if pending else None
+        if exc is not None:
+            raise exc
+        yield {"ok": True}
+        yield _usage_event(*usage)
+
+    monkeypatch.setattr(GeminiModel, "stream", fake)
+    model = FactoryGeminiModel(key_tiers=list(tiers), model_id="a", fallback_model_ids=list(fallbacks),
+                               paid_allowance_usd=allowance, prices=PRICES, throttle_waits=0)
+    return model, used
+
+
+def test_request_cost_usd():
+    assert request_cost_usd("a", {"inputTokens": 1_000_000, "outputTokens": 100_000}, PRICES) == 2.0
+    assert request_cost_usd("zzz", {"inputTokens": 1_000_000, "outputTokens": 0}, PRICES) == 2.0  # dearest
+    assert request_cost_usd("a", {}, {}) == 0.0
+
+
+def test_free_chain_first_then_paid_primary(monkeypatch, capsys):
+    model, used = _tier_model(monkeypatch, [_quota_error(DAILY), _quota_error(DAILY), None], [FREE, PAID])
+    _drain(model)
+    assert used == [("kf", "a"), ("kf", "b"), ("kp", "a")]
+    assert model.tiers_used == ["free", "paid"]
+    assert model.model_switches[-1] == {"from": "b", "to": "a", "reason": "paid_key:daily_quota"}
+    assert "free key exhausted (daily_quota); switching to the paid key" in capsys.readouterr().err
+    assert model.paid_cost_usd == request_cost_usd("a", {"inputTokens": 1000, "outputTokens": 100}, PRICES)
+
+
+def test_free_key_usage_costs_nothing(monkeypatch):
+    model, _ = _tier_model(monkeypatch, [None], [FREE, PAID])
+    _drain(model)
+    assert model.paid_cost_usd == 0 and model.tiers_used == ["free"]
+
+
+def test_paid_allowance_spent_stops_before_the_next_paid_request(monkeypatch):
+    model, used = _tier_model(monkeypatch, [None, None], [PAID], allowance=0.002, usage=(1000, 100))
+    _drain(model)  # costs 0.001 + 0.001 = 0.002
+    with pytest.raises(ModelPaidBudgetError, match="paid allowance spent"):
+        _drain(model)
+    assert used == [("kp", "a")]
+
+
+def test_zero_allowance_with_only_a_paid_key_makes_no_request(monkeypatch):
+    model, used = _tier_model(monkeypatch, [None], [PAID], allowance=0)
+    with pytest.raises(ModelPaidBudgetError):
+        _drain(model)
+    assert used == []
+
+
+def test_free_exhausted_and_paid_spent_is_a_budget_stop(monkeypatch):
+    model, used = _tier_model(monkeypatch, [_quota_error(DAILY), _quota_error(DAILY)], [FREE, PAID], allowance=0)
+    with pytest.raises(ModelPaidBudgetError, match="free models exhausted"):
+        _drain(model)
+    assert used == [("kf", "a"), ("kf", "b")]
+
+
+def test_single_default_key_never_counts_cost(monkeypatch):
+    model, _ = _tier_model(monkeypatch, [None], [KeyTier("default", "k", False)], allowance=0)
+    _drain(model)
+    assert model.paid_cost_usd == 0
+
+
+def test_unresponsive_free_chain_moves_to_paid(monkeypatch):
+    errs = [_quota_error(MINUTE)] * 4  # two per model on the free key, then paid answers
+    model, used = _tier_model(monkeypatch, errs, [FREE, PAID])
+    for _ in range(2):  # a switch resends at once, so only the first throttle on each model is raised
+        with pytest.raises(ModelThrottledException):
+            _drain(model)
+    _drain(model)
+    assert used == [("kf", "a"), ("kf", "a"), ("kf", "b"), ("kf", "b"), ("kp", "a")]
+    assert model.tiers_used == ["free", "paid"]
+
+
+def _paid_chain_model(monkeypatch, errors, tiers):
+    used = []
+    pending = list(errors)
+
+    async def fake(self, *a, **k):
+        used.append((self.client_args["api_key"], self.config["model_id"]))
+        exc = pending.pop(0) if pending else None
+        if exc is not None:
+            raise exc
+        yield {"ok": True}
+
+    monkeypatch.setattr(GeminiModel, "stream", fake)
+    model = FactoryGeminiModel(key_tiers=list(tiers), model_id="smart", fallback_model_ids=["smart2"],
+                               paid_model_ids=["cheap", "cheap2"], paid_allowance_usd=1.0, prices=PRICES,
+                               throttle_waits=0)
+    return model, used
+
+
+def test_paid_tier_walks_its_own_cheaper_chain(monkeypatch):
+    model, used = _paid_chain_model(monkeypatch, [_quota_error(DAILY), _quota_error(DAILY), _quota_error(DAILY), None],
+                                    [FREE, PAID])
+    _drain(model)
+    assert used == [("kf", "smart"), ("kf", "smart2"), ("kp", "cheap"), ("kp", "cheap2")]
+    assert model.model_ids_used == ["smart", "smart2", "cheap", "cheap2"]
+
+
+def test_paid_key_alone_starts_on_the_paid_chain(monkeypatch):
+    model, used = _paid_chain_model(monkeypatch, [None], [PAID])
+    _drain(model)
+    assert used == [("kp", "cheap")] and model.model_ids_used == ["cheap"] and model.fallback_model_ids == ["cheap2"]

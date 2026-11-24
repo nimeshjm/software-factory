@@ -255,6 +255,8 @@ jobs:
         id: harness
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Optional free-tier key (a second project with billing off): used first, GEMINI_API_KEY after it.
+          GEMINI_FREE_API_KEY: ${{ secrets.GEMINI_FREE_API_KEY }}
           WORKSPACE: ${{ github.workspace }}/work
           FACTORY_RUN_ID: ${{ steps.ids.outputs.run_id }}
           OTEL_EXPORTER_OTLP_ENDPOINT: https://api.eu1.honeycomb.io

@@ -26,6 +26,8 @@ export default {
         await env.DB.prepare("INSERT INTO config (key, value) VALUES ('paused', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
           .bind(paused ? "1" : "0")
           .run();
+        // Resume also lifts a paid-key block (the owner topped up or raised the cap).
+        if (!paused) await env.DB.prepare("DELETE FROM config WHERE key = 'paid_blocked_month'").run();
         return json({ paused });
       }
       return json({ error: "not found" }, 404);

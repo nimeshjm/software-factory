@@ -148,3 +148,35 @@ def test_no_changes_error_is_not_suffixed_twice(tmp_path):
     root = Path(__file__).resolve().parent.parent
     subprocess.run([str(root / "scripts/ledger-post.sh"), "finished"], env=env, check=True, cwd=tmp_path)
     assert json.loads(cap.read_text())["error"] == err
+
+
+def test_finished_sums_paid_cost_and_reports_free_key(tmp_path):
+    research = {**_res(), "paid_cost_usd": 0.01, "free_key": True}
+    plan = {**_res(), "paid_cost_usd": 0.025, "free_key": True}
+    b = _run(tmp_path, {"research": research, "plan": plan}, PHASES="research plan")
+    assert b["paid_cost_usd"] == 0.035 and b["free_key"] is True
+    b2 = _run(tmp_path / "x", {"review": _res()}, PHASES="review")
+    assert b2["paid_cost_usd"] == 0 and b2["free_key"] is False
+
+
+def _started(tmp_path, response):
+    out = tmp_path / "out"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True)
+    curl = bin_dir / "curl"
+    if response is None:
+        curl.write_text("#!/usr/bin/env bash\nexit 22\n")
+    else:
+        curl.write_text(f"#!/usr/bin/env bash\nprintf '%s' '{json.dumps(response)}'\n")
+    curl.chmod(0o755)
+    e = {k: v for k, v in os.environ.items() if k not in ("PHASE", "AGENT")}
+    e.update(PATH=f"{bin_dir}:{e['PATH']}", FACTORY_URL="https://f.example", FACTORY_TOKEN="t", RUN_ID="r1",
+             OUT_DIR=str(out))
+    subprocess.run([str(SCRIPT), "started"], env=e, check=True, capture_output=True, text=True)
+    return (out / "paid_allowance.txt").read_text().strip()
+
+
+def test_started_writes_the_paid_allowance(tmp_path):
+    assert _started(tmp_path / "a", {"ok": True, "paid_allowance_usd": 0.12}) == "0.12"
+    assert _started(tmp_path / "b", {"ok": True}) == "0"
+    assert _started(tmp_path / "c", None) == "0"

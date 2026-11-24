@@ -1,16 +1,17 @@
-import { agentSpec, AGENT_SPECS, dailyQuota, maxOpenFactoryPrs } from "./config";
+import { agentSpec, AGENT_SPECS, dailyPaidCap, dailyQuota, maxOpenFactoryPrs, runPaidCap } from "./config";
 import { dispatchRun } from "./dispatch";
 import { listIssues, listOpenPRs } from "./github";
 import { sendAlert } from "./alert";
 import { sendEvent } from "./honeycomb";
 import { finishedEvent } from "./ledger";
 import { planTick, type Decision, type TickState } from "./preflight";
-import { isPaused, loadQuota } from "./quota";
+import { isPaused, loadPaidBudget, loadQuota, paidExhausted } from "./quota";
 import type { Env, RunRow } from "./types";
 
 export async function loadTickState(env: Env, now: Date): Promise<TickState> {
   const paused = await isPaused(env);
   const quota = await loadQuota(env, now);
+  const paid = await loadPaidBudget(env, now, dailyPaidCap(env), runPaidCap(env));
   const since = new Date(now.getTime() - 26 * 3600_000).toISOString();
   const [inflight, recent] = await Promise.all([
     env.DB.prepare("SELECT id, agent, subject, dispatched_at, reserved_calls FROM runs WHERE status IN ('dispatched','started')").all<RunRow>(),
@@ -33,6 +34,7 @@ export async function loadTickState(env: Env, now: Date): Promise<TickState> {
     agentSpecs: AGENT_SPECS,
     maxOpenFactoryPrs: maxOpenFactoryPrs(env),
     unlabeledIssues: [],
+    paidExhausted: paidExhausted(paid),
   };
   if (paused) return base; // skip GitHub calls entirely while paused
   // 2 list calls (plus token caching) keeps the tick well under 50 subrequests.

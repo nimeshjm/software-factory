@@ -43,6 +43,12 @@ describe("planTick", () => {
     expect(dispatched(d).map((x) => x.agent)).toEqual(["triage"]);
     expect(d).toContainEqual({ kind: "skip", agent: "builder", reason: "quota" });
   });
+  it("dispatches nothing while the free quota and the paid budget are both gone", () => {
+    const st = base({ unlabeledIssues: [5], openIssues: [issue(5, []), feat(1)], paidExhausted: true });
+    const d = planTick(st, NOW);
+    expect(d.some((x) => x.kind === "dispatch")).toBe(false);
+    expect(d).toContainEqual({ kind: "skip", agent: "triage", reason: "paid_budget" });
+  });
   it("applies backpressure on open factory PRs", () => {
     const prs = [1, 2, 3].map((n) => ({ number: 10 + n, headRef: `feat/${n}-x`, body: "", author: "app" }));
     const d = planTick(base({ openPRs: prs, openIssues: [feat(9)] }), NOW);

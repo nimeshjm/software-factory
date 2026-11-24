@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-config-sync.sh: asserts that values duplicated outside factory.config.json stay in sync with it.
 #  1. control-plane/wrangler.jsonc vars: TARGET_REPO, FACTORY_REPO, TARGET_DEFAULT_BRANCH, FACTORY_REF,
-#     DAILY_MODEL_CALLS, MAX_OPEN_FACTORY_PRS.
+#     DAILY_MODEL_CALLS, MAX_OPEN_FACTORY_PRS, DAILY_PAID_CAP_USD and RUN_PAID_CAP_USD (billing; "0" when billing is off).
 #  2. control-plane/src/config.ts AGENT_SPECS maxModelCalls / timeoutMinutes per agent equal the config
 #     (agents with phase_overrides: sum over their `phases`, not `extra_phases`; an extra phase must fit the sum).
 #  3. The inline timeout-minutes map in .github/workflows/agent-run.yml: for every agent,
@@ -32,6 +32,8 @@ check_var TARGET_DEFAULT_BRANCH "$(jq -r '.target.default_branch' "$CONFIG")"
 check_var FACTORY_REF "$(jq -r '.factory.ref' "$CONFIG")"
 check_var DAILY_MODEL_CALLS "$(jq -r '.quota.daily_model_calls' "$CONFIG")"
 check_var MAX_OPEN_FACTORY_PRS "$(jq -r '.quota.max_open_factory_prs' "$CONFIG")"
+check_var DAILY_PAID_CAP_USD "$(jq -r 'if .billing.enabled then .billing.daily_paid_cap_usd else 0 end | tostring' "$CONFIG")"
+check_var RUN_PAID_CAP_USD "$(jq -r 'if .billing.enabled then .billing.run_paid_cap_usd else 0 end | tostring' "$CONFIG")"
 
 # --- expected per-agent budgets from the config: "<agent> <calls> <minutes>"
 # Sums run over `.phases` only (the default sequence); a phase without an override uses the agent-level value.

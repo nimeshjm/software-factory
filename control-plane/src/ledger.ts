@@ -1,5 +1,5 @@
-import { dailyQuota } from "./config";
-import { computeQuota } from "./quota";
+import { dailyPaidCap, dailyQuota, runPaidCap } from "./config";
+import { computePaidBudget, computeQuota, loadPaidBudget, paidAllowance, utcMonth } from "./quota";
 import { isPaused } from "./quota";
 import { sendAlert } from "./alert";
 import { sendEvent } from "./honeycomb";
@@ -28,11 +28,23 @@ export function failureAlert(
 // would fail the same way, so the factory pauses itself until a human resumes it.
 export const BILLING_STOP_REASON = "billing_blocked";
 
-/** Pure: the alert text when a finished run should pause the factory, else null. */
-export function billingPauseAlert(id: string, b: { stop_reason?: string | null }, row: { workflow_run_url?: string | null } | null): string | null {
-  if (b.stop_reason !== BILLING_STOP_REASON) return null;
+/** Pure: the alert text when a finished run should pause the factory, else null. With a free key the factory
+ * keeps running on it, so this returns null and billingBlockAlert reports the paid key blocked instead. */
+export function billingPauseAlert(
+  id: string, b: { stop_reason?: string | null; free_key?: boolean | null }, row: { workflow_run_url?: string | null } | null,
+): string | null {
+  if (b.stop_reason !== BILLING_STOP_REASON || b.free_key === true) return null;
   const link = row?.workflow_run_url ? ` ${row.workflow_run_url}` : "";
   return `factory: PAUSED - Gemini billing blocked on run ${id} (prepay balance or spend cap). Top up or raise the cap, then POST /admin/resume.${link}`;
+}
+
+/** Pure: the alert when the paid key is blocked but a free key keeps the factory running, else null. */
+export function billingBlockAlert(
+  id: string, b: { stop_reason?: string | null; free_key?: boolean | null }, row: { workflow_run_url?: string | null } | null, month: string,
+): string | null {
+  if (b.stop_reason !== BILLING_STOP_REASON || b.free_key !== true) return null;
+  const link = row?.workflow_run_url ? ` ${row.workflow_run_url}` : "";
+  return `factory: paid Gemini key blocked for ${month} on run ${id} (prepay balance or spend cap); running on the free key only. Top up or raise the cap, then POST /admin/resume to use it again.${link}`;
 }
 
 async function ensureRun(env: Env, id: string, agent: string, phase: string | null, now: string): Promise<void> {
@@ -53,6 +65,8 @@ export interface FinishedBody {
   throttles?: number | null;
   dry_run?: boolean | null;
   verdict?: string | null;
+  paid_cost_usd?: number | null;
+  free_key?: boolean | null;
 }
 
 const VERDICTS = new Set(["approve", "request_changes", "comment", "needs_human"]);
@@ -105,8 +119,13 @@ export function finishedEvent(row: RunRow, body: FinishedBody, now: Date): Recor
     workflow_run_url: row.workflow_run_url ?? null,
     dry_run: typeof body.dry_run === "boolean" ? body.dry_run : null,
     verdict: typeof body.verdict === "string" && VERDICTS.has(body.verdict) ? body.verdict : null,
+    paid_cost_usd: paidCost(body.paid_cost_usd),
+    free_key: typeof body.free_key === "boolean" ? body.free_key : null,
   };
 }
+
+/** A reported paid cost: a finite, non-negative number of USD, else 0. */
+export const paidCost = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
 
 export async function handleStarted(req: Request, env: Env, ctx: ExecutionContext, id: string): Promise<Response> {
   const b = (await req.json().catch(() => null)) as { agent?: string; phase?: string; workflow_run_url?: string } | null;
@@ -117,9 +136,13 @@ export async function handleStarted(req: Request, env: Env, ctx: ExecutionContex
   await env.DB.prepare("UPDATE runs SET started_at = ?, status = 'started', workflow_run_url = ?, phase = COALESCE(?, phase) WHERE id = ? AND status IN ('dispatched','started')")
     .bind(now, b.workflow_run_url ?? null, b.phase ?? null, id)
     .run();
+  // Hand out this run's share of today's paid budget and hold it against the cap while the run is in flight.
+  const budget = await loadPaidBudget(env, nowDate, dailyPaidCap(env), runPaidCap(env), id);
+  const allowance = paidAllowance(budget);
+  await env.DB.prepare("UPDATE runs SET paid_reserved_usd = ? WHERE id = ?").bind(allowance, id).run();
   const row = await env.DB.prepare("SELECT * FROM runs WHERE id = ?").bind(id).first<RunRow>();
   if (row) void sendEvent(env, startedEvent(row, b, nowDate), ctx);
-  return json({ ok: true });
+  return json({ ok: true, paid_allowance_usd: allowance });
 }
 
 export async function handleFinished(req: Request, env: Env, ctx: ExecutionContext, id: string): Promise<Response> {
@@ -132,17 +155,23 @@ export async function handleFinished(req: Request, env: Env, ctx: ExecutionConte
   await ensureRun(env, id, b.agent ?? "", null, now);
   const calls = Number.isFinite(b.model_calls) ? Math.max(0, Math.floor(b.model_calls as number)) : 0;
   await env.DB.prepare(
-    "UPDATE runs SET status = ?, stop_reason = ?, error = ?, model_calls = ?, finished_at = ?, pr_number = COALESCE(?, pr_number), issue_number = COALESCE(?, issue_number) WHERE id = ?",
+    "UPDATE runs SET status = ?, stop_reason = ?, error = ?, model_calls = ?, finished_at = ?, pr_number = COALESCE(?, pr_number), issue_number = COALESCE(?, issue_number), paid_cost_usd = ? WHERE id = ?",
   )
-    .bind(b.status, b.stop_reason ?? null, typeof b.error === "string" ? b.error.slice(0, 300) : null, calls, now, toInt(b.pr_number), toInt(b.issue_number), id)
+    .bind(b.status, b.stop_reason ?? null, typeof b.error === "string" ? b.error.slice(0, 300) : null, calls, now, toInt(b.pr_number), toInt(b.issue_number), paidCost(b.paid_cost_usd), id)
     .run();
   await env.DB.prepare("DELETE FROM locks WHERE run_id = ?").bind(id).run();
   const row = await env.DB.prepare("SELECT * FROM runs WHERE id = ?").bind(id).first<RunRow>();
   if (row) void sendEvent(env, finishedEvent(row, b, nowDate), ctx);
   const billing = billingPauseAlert(id, b, row);
+  const blocked = billingBlockAlert(id, b, row, utcMonth(nowDate));
   if (billing) {
     await env.DB.prepare("INSERT INTO config (key, value) VALUES ('paused', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
     void sendAlert(env, billing, ctx);
+  } else if (blocked) {
+    await env.DB.prepare("INSERT INTO config (key, value) VALUES ('paid_blocked_month', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .bind(utcMonth(nowDate))
+      .run();
+    void sendAlert(env, blocked, ctx);
   } else if (ALERT_STATUSES.has(b.status)) {
     const text = failureAlert(id, { status: b.status, stop_reason: b.stop_reason }, row);
     if (text) void sendAlert(env, text, ctx);
@@ -152,14 +181,18 @@ export async function handleFinished(req: Request, env: Env, ctx: ExecutionConte
 
 export interface StatusDoc {
   paused: boolean;
-  today: { model_calls: number; reserved: number; quota: number };
+  today: { model_calls: number; reserved: number; quota: number; paid_usd: number; paid_reserved_usd: number; paid_cap_usd: number; paid_blocked: boolean };
   in_flight: { run_id: string; agent: string; subject: string; status: string; dispatched_at: string; started_at: string | null; workflow_run_url: string | null }[];
   last_tick: { at: string; decisions: unknown[] } | null;
 }
 
 /** Pure status math. */
-export function buildStatus(runs: RunRow[], paused: boolean, lastTick: string | null, daily: number, now: Date): StatusDoc {
+export function buildStatus(
+  runs: RunRow[], paused: boolean, lastTick: string | null, daily: number, now: Date,
+  paid: { cap: number; blocked: boolean } = { cap: 0, blocked: false },
+): StatusDoc {
   const q = computeQuota(runs, now);
+  const pb = computePaidBudget(runs, now, paid.cap, paid.cap, paid.blocked);
   let last: StatusDoc["last_tick"] = null;
   try {
     last = lastTick ? JSON.parse(lastTick) : null;
@@ -168,7 +201,11 @@ export function buildStatus(runs: RunRow[], paused: boolean, lastTick: string | 
   }
   return {
     paused,
-    today: { model_calls: q.usedToday, reserved: q.reservedInFlight, quota: daily },
+    today: {
+      model_calls: q.usedToday, reserved: q.reservedInFlight, quota: daily,
+      paid_usd: Math.round(pb.spentToday * 10_000) / 10_000, paid_reserved_usd: Math.round(pb.reservedInFlight * 10_000) / 10_000,
+      paid_cap_usd: paid.cap, paid_blocked: paid.blocked,
+    },
     in_flight: runs
       .filter((r) => (IN_FLIGHT_STATUSES as string[]).includes(r.status))
       .map((r) => ({ run_id: r.id, agent: r.agent, subject: r.subject, status: r.status, dispatched_at: r.dispatched_at, started_at: r.started_at, workflow_run_url: r.workflow_run_url })),
@@ -183,6 +220,7 @@ export function statusHtml(s: StatusDoc): string {
   return `<!doctype html><meta charset="utf-8"><title>Factory status</title><style>body{font:14px system-ui;margin:2rem}td,th{border:1px solid #888;padding:4px 8px}table{border-collapse:collapse;margin-bottom:1rem}</style>
 <h1>Factory ${s.paused ? "(PAUSED)" : ""}</h1>
 <p>Model calls today: ${s.today.model_calls} used + ${s.today.reserved} reserved / ${s.today.quota}</p>
+<p>Paid key today (estimate): $${s.today.paid_usd} spent + $${s.today.paid_reserved_usd} reserved / $${s.today.paid_cap_usd}${s.today.paid_blocked ? " (BLOCKED this month)" : ""}</p>
 <h2>In flight</h2><table><tr><th>run</th><th>agent</th><th>subject</th><th>status</th><th>dispatched</th></tr>${rows(s.in_flight.map((r) => [r.run_id, r.agent, r.subject, r.status, r.dispatched_at]))}</table>
 <h2>Last tick ${esc(s.last_tick?.at ?? "never")}</h2><table><tr><th>decision</th></tr>${rows((s.last_tick?.decisions ?? []).map((d) => [JSON.stringify(d)]))}</table>`;
 }
@@ -193,7 +231,9 @@ export async function handleStatus(req: Request, env: Env): Promise<Response> {
     .bind(startOfUtcDay(now))
     .all<RunRow>();
   const lt = await env.DB.prepare("SELECT value FROM config WHERE key = 'last_tick'").first<{ value: string }>();
-  const doc = buildStatus(results ?? [], await isPaused(env), lt?.value ?? null, dailyQuota(env), now);
+  const pbRow = await env.DB.prepare("SELECT value FROM config WHERE key = 'paid_blocked_month'").first<{ value: string }>();
+  const doc = buildStatus(results ?? [], await isPaused(env), lt?.value ?? null, dailyQuota(env), now,
+    { cap: dailyPaidCap(env), blocked: pbRow?.value === utcMonth(now) });
   if ((req.headers.get("accept") ?? "").includes("text/html")) {
     return new Response(statusHtml(doc), { headers: { "content-type": "text/html; charset=utf-8" } });
   }

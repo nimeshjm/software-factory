@@ -35,6 +35,8 @@ class RunSpec:
     unresponsive_switch_after: int = 2
     throttle_waits: int = 3
     throttle_wait_max_s: float = 65.0
+    # Chain walked on a paid key tier (models.<key>.paid_model_ids); empty = the same chain as the free tier.
+    paid_model_ids: tuple[str, ...] = ()
 
     @property
     def timeout_seconds(self) -> float:
@@ -93,6 +95,7 @@ def resolve_run_spec(cfg: dict[str, Any], agent: str, phase: str) -> RunSpec:
         unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
         throttle_waits=int(m.get("throttle_waits", 3)),
         throttle_wait_max_s=float(m.get("throttle_wait_max_s", 65.0)),
+        paid_model_ids=tuple(m.get("paid_model_ids", [])),
     )
 
 
@@ -117,6 +120,7 @@ def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> 
                    unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
                    throttle_waits=int(m.get("throttle_waits", 3)),
                    throttle_wait_max_s=float(m.get("throttle_wait_max_s", 65.0)),
+                   paid_model_ids=tuple(m.get("paid_model_ids", [])),
                    max_model_calls=cap, limits=limits)
 
 

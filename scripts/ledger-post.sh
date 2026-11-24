@@ -7,15 +7,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 EVENT="${1:?usage: ledger-post.sh started|finished}"
 RUN_ID="${RUN_ID:?RUN_ID required}"
 
+# post <path> <payload> [response file]: the response body goes to the file when given.
 post() {
-  local path=$1 payload=$2
+  local path=$1 payload=$2 resp=${3:-/dev/null}
   if [ -z "${FACTORY_URL:-}" ] || [ -z "${FACTORY_TOKEN:-}" ]; then
     warn "FACTORY_URL/FACTORY_TOKEN not set; skipping ledger post"
     return 0
   fi
   if ! printf 'header = "Authorization: Bearer %s"\n' "$FACTORY_TOKEN" \
     | curl -sS --fail-with-body --max-time 15 --retry 2 -K - -X POST \
-        -H 'Content-Type: application/json' --data "$payload" "${FACTORY_URL%/}/runs/$RUN_ID/$path" >/dev/null; then
+        -H 'Content-Type: application/json' --data "$payload" "${FACTORY_URL%/}/runs/$RUN_ID/$path" >"$resp"; then
     warn "ledger post $path failed (ignored)"
   fi
 }
@@ -24,7 +25,14 @@ case "$EVENT" in
   started)
     payload="$(jq -n --arg a "${AGENT:-}" --arg p "${PHASE:-}" --arg u "${WORKFLOW_RUN_URL:-}" \
       '{agent: $a, phase: $p, workflow_run_url: $u}')"
-    post started "$payload" || true ;;
+    # The control plane answers with this run's paid allowance (CONTRACTS.md, Daily paid budget); none = 0.
+    mkdir -p "$OUT_DIR"
+    resp="$(mktemp)"
+    post started "$payload" "$resp" || true
+    allowance="$(jq -r '(.paid_allowance_usd // 0) | tonumber? // 0' "$resp" 2>/dev/null || true)"
+    printf '%s\n' "${allowance:-0}" >"$OUT_DIR/paid_allowance.txt"
+    log "paid allowance: \$${allowance:-0}"
+    rm -f "$resp" ;;
   finished)
     results=()
     for f in "$OUT_DIR"/phases/*/result.json; do if [ -f "$f" ]; then results+=("$f"); fi; done
@@ -52,6 +60,8 @@ case "$EVENT" in
                              output_tokens: (map(.usage.output_tokens // 0) | add),
                              total_tokens: (map(.usage.total_tokens // 0) | add)},
                      throttles: (map(.throttles // 0) | add),
+                     paid_cost_usd: (map(.paid_cost_usd // 0) | add),
+                     free_key: (any(.[]; .free_key == true)),
                      chosen: ((map(select(.success != true)) | first) // last)}' "${results[@]}")"
       # phase = first failing phase, else the last one run; its dir name is the phase.
       bad_phase=""; last_phase=""
@@ -80,6 +90,7 @@ case "$EVENT" in
                     | ($base + (if $blocked == "" or ($base | contains("blocked: ")) then "" elif $base == "" then "blocked: " + $blocked else "; blocked: " + $blocked end))
                     | if . == "" then null else .[:300] end) end),
           throttles: $r.throttles, dry_run: $dry,
+          paid_cost_usd: $r.paid_cost_usd, free_key: $r.free_key,
           verdict: (if $verdict == "" then null else $verdict end),
           pr_number: (if $cpr != "" then ($cpr | tonumber) elif $pr != "" then ($pr | tonumber) else null end),
           issue_number: (if $issue == "" then null else ($issue | tonumber) end)}')"

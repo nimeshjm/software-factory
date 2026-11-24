@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { billingPauseAlert, buildStatus, handleFinished, failureAlert, finishedEvent, startedEvent } from "../src/ledger";
+import { billingBlockAlert, billingPauseAlert, buildStatus, handleStarted, handleFinished, failureAlert, finishedEvent, startedEvent } from "../src/ledger";
 import { sendEvent } from "../src/honeycomb";
-import { computeQuota } from "../src/quota";
+import { computePaidBudget, computeQuota, exhaustionWindowStart, paidAllowance, paidExhausted } from "../src/quota";
 import type { RunRow } from "../src/types";
 
 const run = (o: Partial<RunRow>): RunRow => ({
@@ -24,7 +24,7 @@ describe("quota/status math", () => {
     expect(computeQuota(rows, now)).toEqual({ usedToday: 35, reservedInFlight: 120 });
     const s = buildStatus(rows, true, JSON.stringify({ at: "x", decisions: [1] }), 400, now);
     expect(s.paused).toBe(true);
-    expect(s.today).toEqual({ model_calls: 35, reserved: 120, quota: 400 });
+    expect(s.today).toEqual({ model_calls: 35, reserved: 120, quota: 400, paid_usd: 0, paid_reserved_usd: 0, paid_cap_usd: 0, paid_blocked: false });
     expect(s.in_flight.map((r) => r.run_id)).toEqual(["d", "e"]);
     expect(s.last_tick).toEqual({ at: "x", decisions: [1] });
     expect(buildStatus([], false, null, 400, now).last_tick).toBeNull();
@@ -68,6 +68,7 @@ describe("finishedEvent", () => {
       status: "failed", stop_reason: "exception", phase: "implement", error: "boom", model_calls: 12, reserved_calls: 100,
       throttles: 3, "usage.input_tokens": 100, "usage.output_tokens": 20, "usage.total_tokens": 120,
       duration_s: 555, queue_s: 45, issue_number: 7, pr_number: 9, workflow_run_url: "https://example/run/1", dry_run: false, verdict: null,
+      paid_cost_usd: 0, free_key: null,
     });
   });
   it("gives null durations for a run that never started and nulls for absent fields", () => {
@@ -157,5 +158,84 @@ describe("handleFinished", () => {
     expect(withErr[3]).toBe("e".repeat(300));
     const without = await call({ status: "success", stop_reason: "end_turn" });
     expect(without[3]).toBeNull();
+  });
+});
+
+
+describe("paid budget", () => {
+  const t = new Date("2026-11-24T12:00:00Z");
+  const rows = [
+    run({ id: "a", status: "success", finished_at: "2026-11-24T02:00:00Z", paid_cost_usd: 0.05 }),
+    run({ id: "b", status: "failed", finished_at: "2026-11-24T09:00:00Z", paid_cost_usd: 0.03, stop_reason: "paid_budget" }),
+    run({ id: "c", status: "success", finished_at: "2026-11-23T23:00:00Z", paid_cost_usd: 9 }),
+    run({ id: "d", status: "started", paid_reserved_usd: 0.04 }),
+    run({ id: "me", status: "started", paid_reserved_usd: 0.12 }),
+  ];
+  it("sums today's spend and other runs' reservations", () => {
+    const b = computePaidBudget(rows, t, 0.22, 0.12, false, "me");
+    expect(b).toMatchObject({ spentToday: 0.08, reservedInFlight: 0.04, exhausted: true });
+    expect(paidAllowance(b)).toBe(0.1); // 0.22 - 0.08 - 0.04
+    expect(paidAllowance(computePaidBudget(rows, t, 1, 0.12, false, "me"))).toBe(0.12); // run cap
+    expect(paidAllowance(computePaidBudget(rows, t, 0.05, 0.12, false, "me"))).toBe(0);
+    expect(paidAllowance(computePaidBudget(rows, t, 1, 0.12, true, "me"))).toBe(0); // blocked
+    expect(paidAllowance(computePaidBudget([], t, 0, 0, false))).toBe(0); // no cap configured
+  });
+  it("is exhausted only after a paid_budget stop since the free reset and with no budget left", () => {
+    expect(exhaustionWindowStart(new Date("2026-11-24T03:00:00Z"))).toBe("2026-11-24T00:00:00.000Z");
+    expect(exhaustionWindowStart(t)).toBe("2026-11-24T07:00:00.000Z");
+    expect(paidExhausted(computePaidBudget(rows, t, 1, 0.12, false))).toBe(false); // budget left
+    expect(paidExhausted(computePaidBudget(rows, t, 0.08, 0.12, false))).toBe(true);
+    const early = [run({ id: "x", status: "failed", finished_at: "2026-11-24T05:00:00Z", stop_reason: "paid_budget" })];
+    expect(paidExhausted(computePaidBudget(early, t, 0, 0, false))).toBe(false); // before the free reset
+  });
+});
+
+describe("billing alerts with and without a free key", () => {
+  it("pauses without a free key, blocks the paid key with one", () => {
+    expect(billingPauseAlert("r1", { stop_reason: "billing_blocked", free_key: true }, null)).toBeNull();
+    expect(billingBlockAlert("r1", { stop_reason: "billing_blocked", free_key: true }, null, "2026-11"))
+      .toBe("factory: paid Gemini key blocked for 2026-11 on run r1 (prepay balance or spend cap); running on the free key only. Top up or raise the cap, then POST /admin/resume to use it again.");
+    expect(billingBlockAlert("r1", { stop_reason: "billing_blocked" }, null, "2026-11")).toBeNull();
+    expect(billingBlockAlert("r1", { stop_reason: "exception", free_key: true }, null, "2026-11")).toBeNull();
+  });
+});
+
+describe("handleStarted and handleFinished paid fields", () => {
+  const fakeEnv = (rows: Partial<RunRow>[], config: Record<string, string> = {}) => {
+    const writes: { sql: string; args: unknown[] }[] = [];
+    const stmt = (sql: string, args: unknown[] = []) => ({
+      bind: (...a: unknown[]) => stmt(sql, a),
+      run: async () => { writes.push({ sql, args }); return {}; },
+      first: async () => {
+        const m = /key = '([a-z_]+)'/.exec(sql);
+        return m && config[m[1]] !== undefined ? { value: config[m[1]] } : null;
+      },
+      all: async () => ({ results: rows.map((r) => run(r)) }),
+    });
+    return { env: { DB: { prepare: (sql: string) => stmt(sql) }, DAILY_PAID_CAP_USD: "0.22", RUN_PAID_CAP_USD: "0.12" } as never, writes };
+  };
+  const post = (path: string, body: unknown) => new Request(`https://x/runs/r1/${path}`, { method: "POST", body: JSON.stringify(body) });
+
+  it("started returns and reserves the allowance", async () => {
+    const { env, writes } = fakeEnv([{ id: "o", status: "success", finished_at: new Date().toISOString(), paid_cost_usd: 0.15 }]);
+    const res = await handleStarted(post("started", { agent: "builder" }), env, { waitUntil() {} } as never, "r1");
+    const body = (await res.json()) as { paid_allowance_usd: number };
+    expect(body.paid_allowance_usd).toBe(0.07);
+    expect(writes.find((w) => w.sql.startsWith("UPDATE runs SET paid_reserved_usd"))?.args).toEqual([0.07, "r1"]);
+  });
+  it("started gives nothing while the paid key is blocked this month", async () => {
+    const month = new Date().toISOString().slice(0, 7);
+    const { env } = fakeEnv([], { paid_blocked_month: month });
+    const res = await handleStarted(post("started", {}), env, { waitUntil() {} } as never, "r1");
+    expect(((await res.json()) as { paid_allowance_usd: number }).paid_allowance_usd).toBe(0);
+  });
+  it("finished stores the paid cost; billing_blocked with a free key blocks the month instead of pausing", async () => {
+    const { env, writes } = fakeEnv([]);
+    await handleFinished(post("finished", { status: "failed", stop_reason: "billing_blocked", paid_cost_usd: 0.031, free_key: true }),
+      env, { waitUntil() {} } as never, "r1");
+    const update = writes.find((w) => w.sql.startsWith("UPDATE runs SET status"));
+    expect(update?.args.at(-2)).toBe(0.031);
+    expect(writes.some((w) => w.sql.includes("'paid_blocked_month'"))).toBe(true);
+    expect(writes.some((w) => w.sql.includes("'paused', '1'"))).toBe(false);
   });
 });

@@ -1,8 +1,8 @@
 import { dispatchRun } from "./dispatch";
-import { agentSpec, dailyQuota } from "./config";
+import { agentSpec, dailyPaidCap, dailyQuota, runPaidCap } from "./config";
 import { sendEvent } from "./honeycomb";
 import { makeRunId } from "./preflight";
-import { isPaused, loadQuota } from "./quota";
+import { isPaused, loadPaidBudget, loadQuota, paidExhausted } from "./quota";
 import type { Env } from "./types";
 import { json, safeEqual, toHex } from "./util";
 
@@ -182,6 +182,7 @@ export async function handleWebhook(req: Request, env: Env, ctx: ExecutionContex
       const spec = agentSpec(it.agent);
       const q = await loadQuota(env, now);
       if (q.usedToday + q.reservedInFlight + spec.maxModelCalls > dailyQuota(env)) o.skipped = "quota";
+      else if (paidExhausted(await loadPaidBudget(env, now, dailyPaidCap(env), runPaidCap(env)))) o.skipped = "paid_budget";
       else {
         let debounced = false;
         if (it.agent === "reviewer" || it.agent === "security-triage") {

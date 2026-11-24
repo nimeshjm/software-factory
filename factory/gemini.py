@@ -9,6 +9,9 @@ switching after strands' 4 s retry moved runs onto the last fallback, whose free
 A billing block (402 Payment Required when the prepay balance is zero, or a 429 naming a spend cap or depleted
 prepayment credits) stops the run as ModelBillingError: every model on the key fails the same way, so neither a
 wait nor a fallback can help, and strands must not retry it.
+Key tiers: with a free-tier key and a billing-linked (paid) key, the run walks the whole model chain on the free
+key first and only then the same chain on the paid key. Paid requests are priced from their usage metadata and
+stop (ModelPaidBudgetError) once the run's paid allowance, handed out by the control plane, is spent.
 """
 
 from __future__ import annotations
@@ -16,7 +19,8 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -31,6 +35,31 @@ BILLING_MARKERS = ("prepayment credits are depleted", "prepayment credits deplet
 
 class ModelBillingError(Exception):
     """The key's project cannot pay for the request: prepay balance at zero or a monthly spend cap reached."""
+
+
+class ModelPaidBudgetError(Exception):
+    """The run's paid allowance (its share of today's paid budget) is spent; no free model is left to use."""
+
+
+@dataclass(frozen=True)
+class KeyTier:
+    name: str  # "free" or "paid" (or "default" for a single key on a free project)
+    api_key: str
+    paid: bool
+
+
+# USD per 1M tokens: {"input": x, "output": y}. Unknown models are priced at the dearest listed one.
+Prices = Mapping[str, Mapping[str, float]]
+
+
+def request_cost_usd(model_id: str, usage: Mapping[str, Any], prices: Prices) -> float:
+    """Estimated cost of one request from strands usage (inputTokens, outputTokens incl. thinking); cache reads at full price."""
+    if prices:
+        price = prices.get(model_id) or max(prices.values(), key=lambda p: (p["input"], p["output"]))
+    else:
+        price = {"input": 0.0, "output": 0.0}
+    return (int(usage.get("inputTokens", 0)) * float(price["input"])
+            + int(usage.get("outputTokens", 0)) * float(price["output"])) / 1_000_000
 
 
 def is_billing_error(error: BaseException) -> bool:
@@ -115,9 +144,25 @@ def unresponsive_reason(error: BaseException) -> str | None:
 class FactoryGeminiModel(GeminiModel):
     def __init__(self, *args: Any, fallback_model_ids: tuple[str, ...] | list[str] = (),
                  first_event_timeout_s: float = 150, unresponsive_switch_after: int = 2,
-                 throttle_waits: int = 3, throttle_wait_max_s: float = 65, **kwargs: Any) -> None:
+                 throttle_waits: int = 3, throttle_wait_max_s: float = 65,
+                 key_tiers: list[KeyTier] | None = None, paid_allowance_usd: float = 0.0,
+                 prices: Prices | None = None, paid_model_ids: tuple[str, ...] | list[str] = (),
+                 **kwargs: Any) -> None:
+        self.key_tiers = list(key_tiers or [])
+        if self.key_tiers:
+            kwargs["client_args"] = {"api_key": self.key_tiers[0].api_key}
         super().__init__(*args, **kwargs)
-        self.fallback_model_ids = list(fallback_model_ids)
+        self.tier_index = 0
+        self.chain = [self.config["model_id"], *fallback_model_ids]  # walked once per free/default key tier
+        self.paid_chain = list(paid_model_ids) or list(self.chain)  # walked on a paid key tier
+        start = self.chain_for(self.key_tiers[0]) if self.key_tiers else self.chain
+        if start[0] != self.config["model_id"]:
+            self.update_config(model_id=start[0])
+        self.fallback_model_ids = list(start[1:])
+        self.paid_allowance_usd = float(paid_allowance_usd)
+        self.prices: Prices = prices or {}
+        self.paid_cost_usd = 0.0
+        self.tiers_used: list[str] = [self.key_tiers[0].name] if self.key_tiers else []
         self.first_event_timeout_s = first_event_timeout_s
         self.unresponsive_switch_after = unresponsive_switch_after
         self.unresponsive_calls = 0
@@ -130,10 +175,58 @@ class FactoryGeminiModel(GeminiModel):
         self.model_switches: list[dict[str, str]] = []
         self.on_switch: Callable[[str, str], None] | None = None
 
-    def _switch_model(self, reason: str = "daily_quota") -> None:
-        old, new = self.config["model_id"], self.fallback_model_ids.pop(0)
+    def chain_for(self, tier: KeyTier) -> list[str]:
+        return self.paid_chain if tier.paid else self.chain
+
+    @property
+    def tier(self) -> KeyTier | None:
+        return self.key_tiers[self.tier_index] if self.key_tiers else None
+
+    def _paid_spent(self) -> bool:
+        return self.paid_cost_usd >= self.paid_allowance_usd
+
+    def _next_tier(self) -> int | None:
+        """Index of the next key tier that can still be used (a paid one only while allowance remains)."""
+        for i in range(self.tier_index + 1, len(self.key_tiers)):
+            if not (self.key_tiers[i].paid and self._paid_spent()):
+                return i
+        return None
+
+    def _next_paid_blocked(self) -> bool:
+        """True when a later paid tier exists but its allowance is spent (so the run stops on budget, not quota)."""
+        return any(t.paid for t in self.key_tiers[self.tier_index + 1:]) and self._paid_spent()
+
+    def _can_fall_back(self) -> bool:
+        return bool(self.fallback_model_ids) or self._next_tier() is not None
+
+    def _switch_tier(self, index: int, reason: str) -> None:
+        old_tier, new = self.tier, self.key_tiers[index]
+        self.tier_index = index
+        self.client_args = {"api_key": new.api_key}
+        chain = self.chain_for(new)
+        self.fallback_model_ids = list(chain[1:])
+        if new.name not in self.tiers_used:
+            self.tiers_used.append(new.name)
+        print(f"[model] {old_tier.name if old_tier else '?'} key exhausted ({reason}); switching to the {new.name} key",
+              file=sys.stderr, flush=True)
+        self._switch_model(reason=f"{new.name}_key:{reason}", new=chain[0])
+
+    def _fall_back(self, reason: str = "daily_quota") -> None:
+        """Next model on this key, else the chain's primary on the next usable key tier."""
+        if self.fallback_model_ids:
+            self._switch_model(reason=reason)
+            return
+        index = self._next_tier()
+        assert index is not None, "_fall_back without _can_fall_back"
+        self._switch_tier(index, reason)
+
+    def _switch_model(self, reason: str = "daily_quota", new: str | None = None) -> None:
+        old = self.config["model_id"]
+        new = new if new is not None else self.fallback_model_ids.pop(0)
         if reason == "daily_quota":
             print(f"[model] {old} daily quota exhausted; switching to {new}", file=sys.stderr, flush=True)
+        elif reason.split(":", 1)[0].endswith("_key"):
+            pass  # _switch_tier printed the key switch
         else:
             detail = reason.split(":", 1)[-1]
             print(f"[model] {old} unresponsive ({detail}); switching to {new}", file=sys.stderr, flush=True)
@@ -158,14 +251,27 @@ class FactoryGeminiModel(GeminiModel):
         """Count one unresponsive call; True when the threshold is hit and a fallback remains (model already switched)."""
         self.unresponsive_calls += 1
         self._record_retry(detail, self.unresponsive_calls)
-        if self.unresponsive_calls >= self.unresponsive_switch_after and self.fallback_model_ids:
-            self._switch_model(reason=f"unresponsive:{detail}")
+        if self.unresponsive_calls >= self.unresponsive_switch_after and self._can_fall_back():
+            self._fall_back(reason=f"unresponsive:{detail}")
             self.unresponsive_calls = 0
             return True
         return False
 
+    def _check_paid_budget(self) -> None:
+        tier = self.tier
+        if tier is not None and tier.paid and self._paid_spent():
+            raise ModelPaidBudgetError(f"paid allowance spent: ${self.paid_cost_usd:.4f} of ${self.paid_allowance_usd:.4f} "
+                                       f"for this run (control plane daily paid budget)")
+
+    def _account(self, event: Any) -> None:
+        tier = self.tier
+        if tier is not None and tier.paid and isinstance(event, dict) and "metadata" in event:
+            usage = (event["metadata"] or {}).get("usage") or {}
+            self.paid_cost_usd += request_cost_usd(self.config["model_id"], usage, self.prices)
+
     async def stream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
         while True:
+            self._check_paid_budget()
             # strands yields messageStart before the streamed response is read, and a 429 surfaces only on
             # that read, so messageStart is held back until real content follows; a switch can still resend.
             held, yielded = None, False
@@ -189,6 +295,7 @@ class FactoryGeminiModel(GeminiModel):
                     yielded = True
                     self.unresponsive_calls = 0
                     self.throttle_waits_done = 0
+                    self._account(event)
                     yield event
                 if held is not None:
                     yield held
@@ -205,9 +312,13 @@ class FactoryGeminiModel(GeminiModel):
                     raise
                 if is_daily_quota_error(error):
                     self._record_retry("daily_quota", 1)
-                    if not self.fallback_model_ids:
+                    if not self._can_fall_back():
+                        if self._next_paid_blocked():
+                            raise ModelPaidBudgetError(
+                                f"free models exhausted and the paid allowance is spent "
+                                f"(${self.paid_cost_usd:.4f} of ${self.paid_allowance_usd:.4f})") from error
                         raise
-                    self._switch_model()
+                    self._fall_back()
                     continue
                 if self.throttle_waits_done < self.throttle_waits:
                     delay = throttle_delay(error, self.throttle_waits_done, self.throttle_wait_max_s)
