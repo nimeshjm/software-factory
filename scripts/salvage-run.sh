@@ -7,7 +7,8 @@
 # (the control plane's failure backoff spaces the retries); and posts one <!-- factory:failure --> comment.
 # A failed `revise` phase (PR set) is different: nothing is pushed to the PR branch and no issue label is reset;
 # work ahead of the PR head is saved on backup/<N>-revise-attempt<k>-<stop_reason>, the PR's revise:requested
-# is swapped for revise:attempted + needs-human (kept as is on stop_reason billing_blocked, which pauses the
+# is swapped for revise:attempted + needs-human (kept as is on stop_reason model_overloaded, retried after the
+# failure backoff, and on billing_blocked, which pauses the
 # factory instead) and the failure comment goes on the PR.
 # Env: RUN_ID, ISSUE, AGENT, GH_TOKEN (the apply token), RUN_URL (optional), PR (optional, revise only).
 set -euo pipefail
@@ -48,6 +49,9 @@ salvage() {
     if [ "$stop_reason" = "billing_blocked" ]; then
       # Not the revise's fault: the control plane paused the factory, and the revise retries after resume.
       action='Labels left as they were: the Gemini project could not pay (prepay balance or spend cap), the factory paused itself, and this revise runs again after it is resumed.'
+    elif [ "$stop_reason" = "model_overloaded" ]; then
+      # Not the revise's fault either: every free model was overloaded and the paid key is kept for daily quota.
+      action='Labels left as they were: every free Gemini model was overloaded (503 high demand or throttled), the paid key is only used once free daily quota is gone, and the tick retries this revise after the failure backoff.'
     else
       edit_labels pr "$PR" "revise:attempted,needs-human" "revise:requested" \
         || warn "salvage: PR label swap failed (ignored)"

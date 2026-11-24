@@ -78,3 +78,20 @@ def test_paid_allowance_from_env():
     assert run_mod.paid_allowance_from_env({}) == 0.0
     assert run_mod.paid_allowance_from_env({"PAID_ALLOWANCE_USD": "x"}) == 0.0
     assert run_mod.paid_allowance_from_env({"PAID_ALLOWANCE_USD": "-1"}) == 0.0
+
+
+def test_model_overloaded_stop_reason(tmp_path, ws, monkeypatch):
+    from factory.gemini import ModelOverloadedError
+
+    monkeypatch.setenv("FACTORY_RUN_ID", "r4")
+
+    async def busy(self, *a, **k):
+        raise ModelOverloadedError("every free model failed transiently")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(FakeModel, "stream", busy)
+    out = tmp_path / "out"
+    rc = run_mod.main(["--agent", "triage", "--phase", "triage", "--inputs", str(_inputs(tmp_path)),
+                       "--out", str(out), "--dry-run", "--fake-model"])
+    res = json.loads((out / "result.json").read_text())
+    assert rc == 1 and res["stop_reason"] == "model_overloaded"

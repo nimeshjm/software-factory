@@ -9,8 +9,13 @@ switching after strands' 4 s retry moved runs onto the last fallback, whose free
 A billing block (402 Payment Required when the prepay balance is zero, or a 429 naming a spend cap or depleted
 prepayment credits) stops the run as ModelBillingError: every model on the key fails the same way, so neither a
 wait nor a fallback can help, and strands must not retry it.
+A 503 "high demand" (UNAVAILABLE) is also waited out on the same model (overload_wait_s doubling, capped) before
+it counts toward a switch: on 2026-11-24 Google shed free-tier traffic and two quick 503s per model walked both
+runs through the free chain and onto the paid key within 70 s.
 Key tiers: with a free-tier key and a billing-linked (paid) key, the run walks the whole model chain on the free
-key first and only then the same chain on the paid key. Paid requests are priced from their usage metadata and
+key first and only then the same chain on the paid key. Only a daily-quota 429 moves a run onto a paid tier: when
+the free chain is used up by transient failures (overload, per-minute throttles, stalls, dropped connections) the
+run stops with ModelOverloadedError and the control plane retries it after the failure backoff. Paid requests are priced from their usage metadata and
 stop (ModelPaidBudgetError) once the run's paid allowance, handed out by the control plane, is spent.
 """
 
@@ -35,6 +40,10 @@ BILLING_MARKERS = ("prepayment credits are depleted", "prepayment credits deplet
 
 class ModelBillingError(Exception):
     """The key's project cannot pay for the request: prepay balance at zero or a monthly spend cap reached."""
+
+
+class ModelOverloadedError(Exception):
+    """Every free model failed transiently (overloaded, throttled, stalled); the paid key is kept for daily-quota exhaustion."""
 
 
 class ModelPaidBudgetError(Exception):
@@ -145,6 +154,7 @@ class FactoryGeminiModel(GeminiModel):
     def __init__(self, *args: Any, fallback_model_ids: tuple[str, ...] | list[str] = (),
                  first_event_timeout_s: float = 150, unresponsive_switch_after: int = 2,
                  throttle_waits: int = 3, throttle_wait_max_s: float = 65,
+                 overload_waits: int = 3, overload_wait_s: float = 20, overload_wait_max_s: float = 60,
                  key_tiers: list[KeyTier] | None = None, paid_allowance_usd: float = 0.0,
                  prices: Prices | None = None, paid_model_ids: tuple[str, ...] | list[str] = (),
                  **kwargs: Any) -> None:
@@ -169,6 +179,10 @@ class FactoryGeminiModel(GeminiModel):
         self.throttle_waits = throttle_waits
         self.throttle_wait_max_s = throttle_wait_max_s
         self.throttle_waits_done = 0  # per-minute waits since the last content event; reset on a switch
+        self.overload_waits = overload_waits
+        self.overload_wait_s = overload_wait_s
+        self.overload_wait_max_s = overload_wait_max_s
+        self.overload_waits_done = 0  # 503 waits since the last content event; reset on a switch
         self.sleep: Callable[[float], Any] = asyncio.sleep
         self.on_throttle_wait: Callable[[], None] | None = None
         self.model_ids_used: list[str] = [self.config["model_id"]]
@@ -185,10 +199,14 @@ class FactoryGeminiModel(GeminiModel):
     def _paid_spent(self) -> bool:
         return self.paid_cost_usd >= self.paid_allowance_usd
 
-    def _next_tier(self) -> int | None:
-        """Index of the next key tier that can still be used (a paid one only while allowance remains)."""
+    def _next_tier(self, transient: bool = False) -> int | None:
+        """Index of the next key tier that can still be used (a paid one only while allowance remains, and never
+        for a transient failure: the paid key is for daily-quota exhaustion, not for a busy free tier)."""
         for i in range(self.tier_index + 1, len(self.key_tiers)):
-            if not (self.key_tiers[i].paid and self._paid_spent()):
+            paid = self.key_tiers[i].paid
+            if paid and transient:
+                continue
+            if not (paid and self._paid_spent()):
                 return i
         return None
 
@@ -196,8 +214,14 @@ class FactoryGeminiModel(GeminiModel):
         """True when a later paid tier exists but its allowance is spent (so the run stops on budget, not quota)."""
         return any(t.paid for t in self.key_tiers[self.tier_index + 1:]) and self._paid_spent()
 
-    def _can_fall_back(self) -> bool:
-        return bool(self.fallback_model_ids) or self._next_tier() is not None
+    def _can_fall_back(self, transient: bool = False) -> bool:
+        return bool(self.fallback_model_ids) or self._next_tier(transient) is not None
+
+    def _paid_held_back(self) -> bool:
+        """True when a transient failure has used up this (unpaid) tier and only a paid tier is left."""
+        tier = self.tier
+        return (tier is not None and not tier.paid and not self._can_fall_back(transient=True)
+                and self._can_fall_back())
 
     def _switch_tier(self, index: int, reason: str) -> None:
         old_tier, new = self.tier, self.key_tiers[index]
@@ -211,12 +235,12 @@ class FactoryGeminiModel(GeminiModel):
               file=sys.stderr, flush=True)
         self._switch_model(reason=f"{new.name}_key:{reason}", new=chain[0])
 
-    def _fall_back(self, reason: str = "daily_quota") -> None:
+    def _fall_back(self, reason: str = "daily_quota", transient: bool = False) -> None:
         """Next model on this key, else the chain's primary on the next usable key tier."""
         if self.fallback_model_ids:
             self._switch_model(reason=reason)
             return
-        index = self._next_tier()
+        index = self._next_tier(transient)
         assert index is not None, "_fall_back without _can_fall_back"
         self._switch_tier(index, reason)
 
@@ -232,6 +256,7 @@ class FactoryGeminiModel(GeminiModel):
             print(f"[model] {old} unresponsive ({detail}); switching to {new}", file=sys.stderr, flush=True)
         self.update_config(model_id=new)
         self.throttle_waits_done = 0
+        self.overload_waits_done = 0
         if new not in self.model_ids_used:
             self.model_ids_used.append(new)
         self.model_switches.append({"from": old, "to": new, "reason": reason})
@@ -248,14 +273,38 @@ class FactoryGeminiModel(GeminiModel):
             "factory.retry.attempt": attempt})
 
     def _unresponsive(self, detail: str) -> bool:
-        """Count one unresponsive call; True when the threshold is hit and a fallback remains (model already switched)."""
+        """Count one unresponsive call; True when the threshold is hit and a fallback remains (model already switched).
+
+        Raises ModelOverloadedError when the threshold is hit on an unpaid tier whose only way on is a paid tier."""
         self.unresponsive_calls += 1
         self._record_retry(detail, self.unresponsive_calls)
-        if self.unresponsive_calls >= self.unresponsive_switch_after and self._can_fall_back():
-            self._fall_back(reason=f"unresponsive:{detail}")
+        if self.unresponsive_calls < self.unresponsive_switch_after:
+            return False
+        if self._can_fall_back(transient=True):
+            self._fall_back(reason=f"unresponsive:{detail}", transient=True)
             self.unresponsive_calls = 0
             return True
+        if self._paid_held_back():
+            print(f"[model] free models unresponsive ({detail}); not using the paid key for a transient failure",
+                  file=sys.stderr, flush=True)
+            raise ModelOverloadedError(
+                f"every free model failed transiently (last: {self.config['model_id']} {detail}); "
+                f"the paid key is kept for daily-quota exhaustion, retry later")
         return False
+
+    async def _overload_wait(self) -> bool:
+        """Wait out a 503 on the same model; False once this model's waits are used up."""
+        if self.overload_waits_done >= self.overload_waits:
+            return False
+        delay = min(self.overload_wait_s * (2 ** self.overload_waits_done), self.overload_wait_max_s)
+        self.overload_waits_done += 1
+        self._record_retry("overload_wait", self.overload_waits_done)
+        print(f"[model] {self.config['model_id']} overloaded (503); waiting {delay:.0f}s",
+              file=sys.stderr, flush=True)
+        if self.on_throttle_wait:
+            self.on_throttle_wait()
+        await self.sleep(delay)
+        return True
 
     def _check_paid_budget(self) -> None:
         tier = self.tier
@@ -295,6 +344,7 @@ class FactoryGeminiModel(GeminiModel):
                     yielded = True
                     self.unresponsive_calls = 0
                     self.throttle_waits_done = 0
+                    self.overload_waits_done = 0
                     self._account(event)
                     yield event
                 if held is not None:
@@ -341,6 +391,8 @@ class FactoryGeminiModel(GeminiModel):
             except genai_errors.ServerError as error:
                 if not is_retryable_server_error(error):
                     raise
+                if not yielded and await self._overload_wait():
+                    continue
                 if not yielded and self._unresponsive("server_error"):
                     continue
                 raise ModelThrottledException(error.message or str(error)) from error

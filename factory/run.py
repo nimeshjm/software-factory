@@ -15,7 +15,7 @@ from typing import Any
 from . import telemetry
 from .config import (ROOT, ProfileError, apply_spike_model, issue_labels, load_config, load_profile,
                      resolve_run_spec)
-from .guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard, ToolCallLog, ToolGuard, build_context_kwargs
+from .guards import ContextGuard, GuardLog, LatencyGuard, PromptStats, QuotaGuard, ToolCallLog, ToolGuard, build_context_kwargs
 from .guards.budget_guard import BudgetGuard
 from .guards.edit_guard import EditGuard
 from .guards.output_guard import redact, scan_obj
@@ -97,6 +97,8 @@ def _build_model(spec, fake: bool, cfg: dict[str, Any] | None = None):
                               first_event_timeout_s=spec.first_event_timeout_s,
                               unresponsive_switch_after=spec.unresponsive_switch_after,
                               throttle_waits=spec.throttle_waits, throttle_wait_max_s=spec.throttle_wait_max_s,
+                              overload_waits=spec.overload_waits, overload_wait_s=spec.overload_wait_s,
+                              overload_wait_max_s=spec.overload_wait_max_s,
                               paid_model_ids=spec.paid_model_ids)
 
 
@@ -210,7 +212,7 @@ def run(args: argparse.Namespace) -> int:
         budget = BudgetGuard(spec.limits, spec.max_model_calls, quota, log,
                              soft_fraction=float(spec.context.get("budget_soft_fraction", 0.85)))
         tool_log = ToolCallLog()
-        hooks = [ToolGuard(log, profile), tool_log, quota, latency, budget,
+        hooks = [ToolGuard(log, profile), tool_log, quota, latency, budget, PromptStats(),
                  ContextGuard(int(spec.context.get("tool_result_max_chars", 20000)), log)]
         if args.agent in ("builder", "bug-fixer"):
             hooks.append(EditGuard(args.phase, spec.limits, log,
@@ -294,6 +296,8 @@ def run(args: argparse.Namespace) -> int:
             result.stop_reason = "billing_blocked"
         elif _in_chain(e, "ModelPaidBudgetError"):
             result.stop_reason = "paid_budget"
+        elif _in_chain(e, "ModelOverloadedError"):
+            result.stop_reason = "model_overloaded"
         else:
             result.stop_reason = "exception"
         result.error = redact(f"{type(e).__name__}: {e}")[:1000]

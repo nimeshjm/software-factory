@@ -27,7 +27,7 @@ def _model(monkeypatch, exc):
         yield  # pragma: no cover
 
     monkeypatch.setattr(GeminiModel, "stream", boom)
-    return FactoryGeminiModel(client_args={"api_key": "x"}, model_id="m")
+    return FactoryGeminiModel(client_args={"api_key": "x"}, model_id="m", overload_waits=0)
 
 
 def test_503_becomes_throttled(monkeypatch):
@@ -69,7 +69,7 @@ def test_is_daily_quota_error():
     assert not is_daily_quota_error(ValueError("x"))
 
 
-def _fallback_model(monkeypatch, errors, fallbacks, throttle_waits=0):
+def _fallback_model(monkeypatch, errors, fallbacks, throttle_waits=0, overload_waits=0):
     """Model whose underlying stream raises the next of `errors` per call (None = succeed); records the model id used.
 
     throttle_waits defaults to 0 so the per-minute tests below exercise the switch path; the wait tests pass it."""
@@ -85,7 +85,7 @@ def _fallback_model(monkeypatch, errors, fallbacks, throttle_waits=0):
 
     monkeypatch.setattr(GeminiModel, "stream", fake)
     model = FactoryGeminiModel(client_args={"api_key": "x"}, model_id="a", fallback_model_ids=fallbacks,
-                               throttle_waits=throttle_waits)
+                               throttle_waits=throttle_waits, overload_waits=overload_waits)
     slept: list[float] = []
 
     async def no_sleep(delay):
@@ -418,7 +418,7 @@ def test_other_client_errors_pass_through(monkeypatch):
 
 # --- key tiers and the paid budget -------------------------------------------------------------------------
 
-from factory.gemini import KeyTier, ModelPaidBudgetError, request_cost_usd  # noqa: E402
+from factory.gemini import KeyTier, ModelOverloadedError, ModelPaidBudgetError, request_cost_usd  # noqa: E402
 
 PRICES = {"a": {"input": 1.0, "output": 10.0}, "b": {"input": 2.0, "output": 20.0}}
 FREE, PAID = KeyTier("free", "kf", False), KeyTier("paid", "kp", True)
@@ -497,15 +497,78 @@ def test_single_default_key_never_counts_cost(monkeypatch):
     assert model.paid_cost_usd == 0
 
 
-def test_unresponsive_free_chain_moves_to_paid(monkeypatch):
-    errs = [_quota_error(MINUTE)] * 4  # two per model on the free key, then paid answers
+def test_unresponsive_free_chain_stops_instead_of_paying(monkeypatch, capsys):
+    """A busy free tier is not a reason to pay: transient failures never move a run onto the paid key."""
+    errs = [_quota_error(MINUTE)] * 4  # two per model on the free key
     model, used = _tier_model(monkeypatch, errs, [FREE, PAID])
     for _ in range(2):  # a switch resends at once, so only the first throttle on each model is raised
         with pytest.raises(ModelThrottledException):
             _drain(model)
+    with pytest.raises(ModelOverloadedError, match="paid key is kept"):
+        _drain(model)
+    assert used == [("kf", "a"), ("kf", "a"), ("kf", "b"), ("kf", "b")]
+    assert model.tiers_used == ["free"] and model.paid_cost_usd == 0
+    assert "not using the paid key for a transient failure" in capsys.readouterr().err
+
+
+def test_daily_quota_after_transient_switch_still_reaches_paid(monkeypatch):
+    errs = [_quota_error(MINUTE), _quota_error(MINUTE), _quota_error(DAILY), None]
+    model, used = _tier_model(monkeypatch, errs, [FREE, PAID])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
     _drain(model)
-    assert used == [("kf", "a"), ("kf", "a"), ("kf", "b"), ("kf", "b"), ("kp", "a")]
-    assert model.tiers_used == ["free", "paid"]
+    assert used == [("kf", "a"), ("kf", "a"), ("kf", "b"), ("kp", "a")]
+    assert model.model_switches[-1]["reason"] == "paid_key:daily_quota"
+
+
+def test_transient_failures_on_the_paid_tier_walk_the_paid_chain(monkeypatch):
+    errs = [_quota_error(DAILY), _quota_error(DAILY), _quota_error(MINUTE), _quota_error(MINUTE), None]
+    model, used = _tier_model(monkeypatch, errs, [FREE, PAID])
+    with pytest.raises(ModelThrottledException):
+        _drain(model)
+    _drain(model)
+    assert used == [("kf", "a"), ("kf", "b"), ("kp", "a"), ("kp", "a"), ("kp", "b")]
+
+
+def test_single_key_transient_exhaustion_raises_as_before(monkeypatch):
+    model, _ = _fallback_model(monkeypatch, [_quota_error(MINUTE)] * 2, [])
+    for _ in range(2):
+        with pytest.raises(ModelThrottledException):
+            _drain(model)
+
+
+def test_503_is_waited_out_on_the_same_model(monkeypatch, capsys):
+    model, used = _fallback_model(monkeypatch, [_server_error(503, "UNAVAILABLE")] * 2 + [None], ["b"],
+                                  overload_waits=3)
+    slept, waits = [], []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    model.sleep = fake_sleep
+    model.on_throttle_wait = lambda: waits.append(1)
+    assert _drain(model) == [{"ok": True}]
+    assert used == ["a", "a", "a"] and model.model_switches == []
+    assert slept == [20, 40] and len(waits) == 2
+    assert model.overload_waits_done == 0  # reset by the content event
+    assert "a overloaded (503); waiting 20s" in capsys.readouterr().err
+
+
+def test_503_waits_are_capped_then_switch(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_server_error(503, "UNAVAILABLE")] * 5 + [None], ["b"],
+                                  overload_waits=3)
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    model.sleep = fake_sleep
+    with pytest.raises(ModelThrottledException):  # waits used up: first strike, raised for strands to retry
+        _drain(model)
+    assert _drain(model) == [{"ok": True}]  # second strike switches to b and resends
+    assert slept == [20, 40, 60]
+    assert used == ["a", "a", "a", "a", "a", "b"]
+    assert model.model_switches == [{"from": "a", "to": "b", "reason": "unresponsive:server_error"}]
 
 
 def _paid_chain_model(monkeypatch, errors, tiers):

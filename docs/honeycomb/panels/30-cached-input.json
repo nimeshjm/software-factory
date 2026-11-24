@@ -1,0 +1,41 @@
+{
+  "dataset": "software-factory",
+  "name": "Input tokens served from Gemini's cache",
+  "description": "Daily input tokens on chat spans against the part Gemini served from its implicit cache (gen_ai.usage.cache_read.input_tokens), by agent. Cached input is billed at a fraction of the input price, so a high share makes the paid-spend estimate (which prices cache reads at full price) an over-estimate.",
+  "query": {
+    "calculations": [
+      {
+        "op": "SUM",
+        "column": "gen_ai.usage.input_tokens"
+      },
+      {
+        "op": "SUM",
+        "column": "gen_ai.usage.cache_read.input_tokens"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "chat"
+      },
+      {
+        "column": "gen_ai.usage.input_tokens",
+        "op": "exists"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.agent"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 82,
+    "width": 12,
+    "height": 4
+  }
+}

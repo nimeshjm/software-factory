@@ -1,0 +1,46 @@
+{
+  "dataset": "software-factory",
+  "name": "Largest sections of the fixed prompt",
+  "description": "Average estimated tokens per section of the system prompt (part system) and of the task message (part task), sent once per phase as factory.task_section events, over 7 days. A heading with #2 is a block that appears twice.",
+  "query": {
+    "calculations": [
+      {
+        "op": "AVG",
+        "column": "factory.task.section_tokens"
+      },
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.task_section"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.agent",
+      "factory.phase",
+      "factory.task.part",
+      "factory.task.section"
+    ],
+    "orders": [
+      {
+        "op": "AVG",
+        "column": "factory.task.section_tokens",
+        "order": "descending"
+      }
+    ],
+    "limit": 60,
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 6,
+    "y_coordinate": 78,
+    "width": 6,
+    "height": 4
+  }
+}

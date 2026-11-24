@@ -1,0 +1,57 @@
+{
+  "dataset": "software-factory",
+  "name": "What each model call's input is made of",
+  "description": "Average estimated tokens (chars / 4) per model request by part, from factory.prompt events, by agent and phase over 7 days. system, tools and task are the fixed prompt every call resends; tool_results, assistant_text, tool_args and edit_args are the history. Cut the biggest fixed part first; a large edit_args means edit_file payloads are being resent.",
+  "query": {
+    "calculations": [
+      {
+        "op": "AVG",
+        "column": "factory.prompt.system_tokens"
+      },
+      {
+        "op": "AVG",
+        "column": "factory.prompt.tools_tokens"
+      },
+      {
+        "op": "AVG",
+        "column": "factory.prompt.task_tokens"
+      },
+      {
+        "op": "AVG",
+        "column": "factory.prompt.tool_results_tokens"
+      },
+      {
+        "op": "AVG",
+        "column": "factory.prompt.assistant_text_tokens"
+      },
+      {
+        "op": "AVG",
+        "column": "factory.prompt.tool_args_tokens"
+      },
+      {
+        "op": "AVG",
+        "column": "factory.prompt.edit_args_tokens"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.prompt"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.agent",
+      "factory.phase"
+    ],
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 74,
+    "width": 12,
+    "height": 4
+  }
+}

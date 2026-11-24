@@ -215,3 +215,13 @@ def test_billing_blocked_revise_keeps_the_pr_labels(tmp_path, env):
     assert not any(c.startswith("pr edit") for c in calls)
     body = (tmp_path / "comment.md").read_text()
     assert "failed in revise (billing_blocked)" in body and "runs again after it is resumed" in body
+
+
+def test_overloaded_revise_keeps_the_pr_labels(tmp_path, env):
+    renv = _revise_env(tmp_path, env)
+    phase(tmp_path, "revise", success=False, stop_reason="model_overloaded", error="every free model failed transiently")
+    p, calls = salvage(tmp_path, renv)
+    assert p.returncode == 0, p.stderr
+    assert not any(c.startswith("pr edit") for c in calls)
+    body = (tmp_path / "comment.md").read_text()
+    assert "failed in revise (model_overloaded)" in body and "retries this revise after the failure backoff" in body

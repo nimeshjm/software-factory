@@ -11,13 +11,14 @@ SCRIPT = ROOT / "scripts" / "honeycomb-board.sh"
 BOARD_DIR = ROOT / "docs" / "honeycomb"
 PANELS = sorted((BOARD_DIR / "panels").glob("*.json"))
 QUERY_PANELS = [p for p in PANELS if json.loads(p.read_text()).get("type", "query") == "query"]
-HARNESS_PANELS = ("08", "09", "10", "12", "13", "14", "21", "22", "23", "24", "25")
+HARNESS_PANELS = ("08", "09", "10", "12", "13", "14", "21", "22", "23", "24", "25", "27", "28", "29", "30")
 PANEL_NAMES = ["00-runbook", "01-success-rate", "02-retry-loops", "03-run-outcomes", "04-where-runs-die",
                "05-quota-burn", "06-run-time", "07-model-calls-vs-cap", "08-model-reliability", "09-model-switches",
                "10-model-retries", "11-throttles", "12-tokens", "13-tool-guard-blocked", "14-guard-events",
                "15-pr-acceptance", "16-pr-outcomes", "17-review-verdicts", "18-tick-decisions",
                "19-prs-opened", "20-merges-per-day", "21-tool-result-tokens", "22-tool-result-size",
-               "23-prompt-size", "24-tool-batching", "25-re-reads", "26-paid-spend"]
+               "23-prompt-size", "24-tool-batching", "25-re-reads", "26-paid-spend", "27-prompt-makeup",
+               "28-input-by-request", "29-prompt-sections", "30-cached-input"]
 COLORS = {"red", "yellow", "blue", "green", "purple"}
 LINE_STYLES = {"filled-solid", "filled-dotted", "solid", "dotted"}
 
@@ -58,7 +59,7 @@ def test_dry_run_sequence_without_key():
         expected += [("POST", f"/1/queries/{ds}"), ("POST", f"/1/query_annotations/{ds}")]
     expected += [("PUT", f"/1/boards/{board_id}")] if board_id else [("POST", "/1/boards")]
     expected += [("GET", f"/1/query_annotations/{ds}") for ds in sorted(set(datasets))]
-    assert len(cols) == 7 and len(QUERY_PANELS) == 26
+    assert len(cols) == 7 and len(QUERY_PANELS) == 30
     assert [(m, p) for m, p, _ in reqs] == expected
     board = next(b for m, p, b in reqs if p.startswith("/1/boards") and m in ("PUT", "POST"))
     assert len(board["panels"]) == len(PANELS)
@@ -214,7 +215,12 @@ FACTORY_COLS = ["name", "run_id", "agent", "subject", "phase", "status", "stop_r
 HARNESS_COLS = ["name", "factory.agent", "factory.phase", "factory.model_id", "gen_ai.usage.input_tokens",
                 "gen_ai.usage.output_tokens", "factory.model.from", "factory.model.to", "factory.model.reason",
                 "factory.retry.reason", "rule", "guard", "gen_ai.request.model", "factory.tool.name",
-                "factory.tool.target", "factory.tool.result_tokens", "factory.run_id"]
+                "factory.tool.target", "factory.tool.result_tokens", "factory.run_id",
+                "gen_ai.usage.cache_read.input_tokens", "factory.prompt.request", "factory.prompt.total_tokens",
+                "factory.prompt.history_tokens", "factory.task.part", "factory.task.section",
+                "factory.task.section_tokens"] + [f"factory.prompt.{p}_tokens" for p in
+                                                  ("system", "tools", "task", "tool_results", "assistant_text",
+                                                   "tool_args", "edit_args")]
 WRITES = ("POST", "PUT", "DELETE")
 
 

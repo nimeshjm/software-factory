@@ -35,6 +35,10 @@ class RunSpec:
     unresponsive_switch_after: int = 2
     throttle_waits: int = 3
     throttle_wait_max_s: float = 65.0
+    # 503 "high demand" waits on the same model before it counts toward a switch: overload_wait_s doubling, capped.
+    overload_waits: int = 3
+    overload_wait_s: float = 20.0
+    overload_wait_max_s: float = 60.0
     # Chain walked on a paid key tier (models.<key>.paid_model_ids); empty = the same chain as the free tier.
     paid_model_ids: tuple[str, ...] = ()
 
@@ -95,6 +99,9 @@ def resolve_run_spec(cfg: dict[str, Any], agent: str, phase: str) -> RunSpec:
         unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
         throttle_waits=int(m.get("throttle_waits", 3)),
         throttle_wait_max_s=float(m.get("throttle_wait_max_s", 65.0)),
+        overload_waits=int(m.get("overload_waits", 3)),
+        overload_wait_s=float(m.get("overload_wait_s", 20.0)),
+        overload_wait_max_s=float(m.get("overload_wait_max_s", 60.0)),
         paid_model_ids=tuple(m.get("paid_model_ids", [])),
     )
 
@@ -120,6 +127,9 @@ def apply_spike_model(cfg: dict[str, Any], spec: RunSpec, labels: list[str]) -> 
                    unresponsive_switch_after=int(m.get("unresponsive_switch_after", 2)),
                    throttle_waits=int(m.get("throttle_waits", 3)),
                    throttle_wait_max_s=float(m.get("throttle_wait_max_s", 65.0)),
+                   overload_waits=int(m.get("overload_waits", 3)),
+                   overload_wait_s=float(m.get("overload_wait_s", 20.0)),
+                   overload_wait_max_s=float(m.get("overload_wait_max_s", 60.0)),
                    paid_model_ids=tuple(m.get("paid_model_ids", [])),
                    max_model_calls=cap, limits=limits)
 
