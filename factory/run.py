@@ -17,6 +17,7 @@ from .config import (ROOT, ProfileError, apply_spike_model, issue_labels, load_c
                      resolve_run_spec)
 from .guards import ContextGuard, GuardLog, LatencyGuard, QuotaGuard, ToolCallLog, ToolGuard, build_context_kwargs
 from .guards.budget_guard import BudgetGuard
+from .guards.edit_guard import EditGuard
 from .guards.output_guard import redact, scan_obj
 from .tools.profile import set_profile
 from .prompts import build_task_message, load_system_prompt
@@ -200,6 +201,10 @@ def run(args: argparse.Namespace) -> int:
         tool_log = ToolCallLog()
         hooks = [ToolGuard(log, profile), tool_log, quota, latency, budget,
                  ContextGuard(int(spec.context.get("tool_result_max_chars", 20000)), log)]
+        if args.agent in ("builder", "bug-fixer"):
+            hooks.append(EditGuard(args.phase, spec.limits, log,
+                                   token_fraction=float(spec.context.get("edit_nudge_fraction", 0.35)),
+                                   read_limit=int(spec.context.get("edit_read_limit", 12))))
         trace_attrs: dict[str, Any] = {"gen_ai.conversation.id": str(run_id), "factory.run_id": str(run_id), "factory.agent": args.agent,
                                        "factory.phase": args.phase, "factory.model": spec.model_key, "factory.model_id": spec.model_id,
                                        "factory.dry_run": bool(args.dry_run)}
@@ -223,7 +228,9 @@ def run(args: argparse.Namespace) -> int:
             trace_attributes=trace_attrs,
             **build_context_kwargs(spec.context),
         )
-        task = build_task_message(inputs, args.agent, args.phase, [out], profile)
+        phase_ctx = (spec.context.get("phase_context_files") or {}).get(args.phase)
+        task = build_task_message(inputs, args.agent, args.phase, [out], profile,
+                                  context_globs=list(phase_ctx) if phase_ctx is not None else None)
         res = agent(task, limits=spec.limits, structured_output_model=model_cls)
         if needs_finalize(res.stop_reason, res.structured_output is not None, latency.nudged or budget.nudged):
             first_stop = res.stop_reason

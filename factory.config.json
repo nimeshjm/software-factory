@@ -146,7 +146,12 @@
     "tool_result_max_chars": 8000,
     "offload_threshold_tokens": 2000,
     "summarize_utilization": 0.8,
-    "preserve_recent": 4
+    "preserve_recent": 4,
+    "edit_nudge_fraction": 0.35,
+    "edit_read_limit": 12,
+    "phase_context_files": {
+      "revise": ["conventions.md", "architecture.md"]
+    }
   },
   "agents": {
     "triage": {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
@@ -110,11 +111,36 @@ def _context_files(ctx: Path, order: list[str]) -> list[Path]:
     return ordered + [f for f in files if f not in ordered]
 
 
+PLAN_MARKER = "<!-- factory:plan -->"
+FAILED_CONCLUSIONS = frozenset({"failure", "timed_out", "cancelled", "action_required", "error"})
+_FAIL_ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*fail\s*\|\s*([^|]*?)\s*\|\s*$", re.IGNORECASE)
+_VERDICT_LINE = re.compile(r"^(request_changes|needs_human|comment):\s*(.+)$", re.IGNORECASE)
+
+
+def review_todo(pr: dict[str, Any]) -> list[str]:
+    """The revise checklist: failing agent checks and the verdict reason from the factory review, then failing CI."""
+    items: list[str] = []
+    body = str((pr.get("factory_review") or {}).get("body") or "")
+    for line in body.splitlines():
+        m = _FAIL_ROW.match(line.strip())
+        if m:
+            items.append(f"{m.group(1)}: {m.group(2)}" if m.group(2) else m.group(1))
+        v = _VERDICT_LINE.match(line.strip())
+        if v:
+            items.append(f"review verdict: {v.group(2)}")
+    for c in pr.get("checks") or []:
+        if str(c.get("conclusion") or "").lower() in FAILED_CONCLUSIONS:
+            items.append(f"CI check failed: {c.get('name')}")
+    return items
+
+
 def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dirs: list[Path] | None = None,
-                       profile: TargetProfile | None = None) -> str:
+                       profile: TargetProfile | None = None, context_globs: list[str] | None = None) -> str:
+    """The task message. `context_globs`, when given, inlines only the context files matching one of them."""
     d = Path(inputs_dir)
     out: list[str] = []
     run = _load(d, "run.json") or {}
+    pr = _load(d, "pr.json")
     out.append(f"Agent: {agent}\nPhase: {phase}")
     for k in ("run_id", "trigger", "target_repo", "issue_number", "pr_number", "commit_sha"):
         if run.get(k) is not None:
@@ -124,6 +150,11 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
         out.append(f"branch: {branch_file.read_text(encoding='utf-8').strip()} (already checked out in the workspace; "
                    "use exactly this value for `branch` in the proposal)")
     out.append(UNTRUSTED_NOTE)
+    if phase == "revise" and pr:
+        todo = review_todo(pr)
+        if todo:
+            out.append("## What to fix (from the review and CI; start here, one edit per item)")
+            out.append(untrusted(f"review checklist for pr #{pr.get('number')}", "\n".join(f"- {t}" for t in todo)))
 
     issue = _load(d, "issue.json")
     if issue:
@@ -132,10 +163,11 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
                    f"author association: {issue.get('authorAssociation')})")
         out.append(untrusted(f"issue #{n}", f"Title: {issue.get('title')}\n\n{issue.get('body') or ''}"))
         for i, c in enumerate(issue.get("comments") or [], 1):
+            if pr and pr.get("plan_comment") and PLAN_MARKER in str(c.get("body") or ""):
+                continue  # the same plan is inlined once below as the PR's plan comment
             who = (c.get("author") or {}).get("login") if isinstance(c.get("author"), dict) else c.get("author")
             out.append(untrusted(f"issue #{n} comment {i} by {who} ({c.get('authorAssociation')})", c.get("body", "")))
 
-    pr = _load(d, "pr.json")
     if pr:
         n = pr.get("number")
         meta = {k: pr.get(k) for k in ("number", "author", "authorAssociation", "labels", "headRefName",
@@ -178,6 +210,9 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
     ctx = d / "context"
     if ctx.is_dir():
         for f in _context_files(ctx, (profile or TargetProfile()).context_files):
+            if context_globs is not None and not any(context_glob_matches(f.relative_to(ctx).as_posix(), g)
+                                                     for g in context_globs):
+                continue
             out.append(f'<context file="{f.relative_to(ctx).as_posix()}">\n{f.read_text(encoding="utf-8")}\n</context>')
 
     for base in [d, *(extra_dirs or [])]:
