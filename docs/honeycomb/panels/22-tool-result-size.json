@@ -1,0 +1,48 @@
+{
+  "dataset": "software-factory",
+  "name": "Tool result size per call",
+  "description": "Typical and worst result size (tokens) per tool call, by tool and agent, over 7 days. A high P95 for read_file means whole files are read instead of line ranges or searches.",
+  "query": {
+    "calculations": [
+      {
+        "op": "P50",
+        "column": "factory.tool.result_tokens"
+      },
+      {
+        "op": "P95",
+        "column": "factory.tool.result_tokens"
+      },
+      {
+        "op": "MAX",
+        "column": "factory.tool.result_tokens"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.tool_call"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.tool.name",
+      "factory.agent"
+    ],
+    "orders": [
+      {
+        "op": "P95",
+        "column": "factory.tool.result_tokens",
+        "order": "descending"
+      }
+    ],
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 6,
+    "y_coordinate": 58,
+    "width": 6,
+    "height": 4
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "dataset": "software-factory",
+  "name": "Input tokens per model call",
+  "description": "Median and largest input per model call (chat spans) per day, by agent and phase. The first call of a phase is the fixed prompt; later calls add every tool result kept so far. Context trimming and on-demand context files (2026-11-24) should pull both lines down.",
+  "query": {
+    "calculations": [
+      {
+        "op": "P50",
+        "column": "gen_ai.usage.input_tokens"
+      },
+      {
+        "op": "MAX",
+        "column": "gen_ai.usage.input_tokens"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "chat"
+      },
+      {
+        "column": "gen_ai.usage.input_tokens",
+        "op": "exists"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.agent",
+      "factory.phase"
+    ],
+    "time_range": 604800,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 62,
+    "width": 12,
+    "height": 4
+  }
+}

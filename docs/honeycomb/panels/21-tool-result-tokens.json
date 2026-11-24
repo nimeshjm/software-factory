@@ -1,0 +1,42 @@
+{
+  "dataset": "software-factory",
+  "name": "Tool result tokens",
+  "description": "Tokens each tool put into the context over 7 days (result size as the model saw it, after truncation; about 4 chars per token), by tool. Every later call in the phase resends these, so the top rows are where the input budget goes. Reads factory.tool_call span events.",
+  "query": {
+    "calculations": [
+      {
+        "op": "SUM",
+        "column": "factory.tool.result_tokens"
+      },
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.tool_call"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.tool.name"
+    ],
+    "orders": [
+      {
+        "op": "SUM",
+        "column": "factory.tool.result_tokens",
+        "order": "descending"
+      }
+    ],
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 58,
+    "width": 6,
+    "height": 4
+  }
+}

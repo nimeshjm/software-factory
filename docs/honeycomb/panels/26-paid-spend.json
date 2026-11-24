@@ -1,0 +1,51 @@
+{
+  "dataset": "factory",
+  "name": "Paid Gemini spend per day",
+  "description": "Estimated paid-key spend (USD, from token usage and billing.prices_usd_per_m) per UTC day, stacked by agent; the line is the daily paid cap. Runs on the free key cost nothing. Reads run.finished paid_cost_usd.",
+  "query": {
+    "calculations": [
+      {
+        "op": "SUM",
+        "column": "paid_cost_usd"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "run.finished"
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "agent_d"
+    ],
+    "time_range": 2592000,
+    "granularity": 86400
+  },
+  "query_style": "graph",
+  "visualization_settings": {
+    "utc_xaxis": true,
+    "charts": [
+      {
+        "chart_index": 0,
+        "chart_type": "stacked",
+        "thresholds": [
+          {
+            "value": 0.5,
+            "color": "red",
+            "operation": "gt",
+            "line_style": "solid",
+            "label": "daily paid cap $0.50"
+          }
+        ]
+      }
+    ]
+  },
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 70,
+    "width": 12,
+    "height": 4
+  }
+}

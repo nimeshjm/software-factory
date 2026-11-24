@@ -1,0 +1,42 @@
+{
+  "dataset": "software-factory",
+  "name": "Tool calls per model call",
+  "description": "Model calls (chat) against tool calls (factory.tool_call) by agent and phase over 7 days. Tool calls well above model calls means reads are batched into one turn; about equal means one read per turn, each resending the whole conversation.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "in",
+        "value": [
+          "chat",
+          "factory.tool_call"
+        ]
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.agent",
+      "factory.phase",
+      "name"
+    ],
+    "orders": [
+      {
+        "op": "COUNT",
+        "order": "descending"
+      }
+    ],
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 0,
+    "y_coordinate": 66,
+    "width": 6,
+    "height": 4
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "dataset": "software-factory",
+  "name": "Files read more than once in a run",
+  "description": "The same file read twice or more in one run over 7 days (read_file and read_context). Some is normal after an edit; a long list means trimmed results are being fetched again.",
+  "query": {
+    "calculations": [
+      {
+        "op": "COUNT"
+      }
+    ],
+    "filters": [
+      {
+        "column": "name",
+        "op": "=",
+        "value": "factory.tool_call"
+      },
+      {
+        "column": "factory.tool.name",
+        "op": "in",
+        "value": [
+          "read_file",
+          "read_context"
+        ]
+      }
+    ],
+    "filter_combination": "AND",
+    "breakdowns": [
+      "factory.run_id",
+      "factory.tool.target"
+    ],
+    "havings": [
+      {
+        "calculate_op": "COUNT",
+        "op": ">",
+        "value": 1
+      }
+    ],
+    "orders": [
+      {
+        "op": "COUNT",
+        "order": "descending"
+      }
+    ],
+    "time_range": 604800
+  },
+  "query_style": "table",
+  "position": {
+    "x_coordinate": 6,
+    "y_coordinate": 66,
+    "width": 6,
+    "height": 4
+  }
+}
