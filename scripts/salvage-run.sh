@@ -7,7 +7,8 @@
 # (the control plane's failure backoff spaces the retries); and posts one <!-- factory:failure --> comment.
 # A failed `revise` phase (PR set) is different: nothing is pushed to the PR branch and no issue label is reset;
 # work ahead of the PR head is saved on backup/<N>-revise-attempt<k>-<stop_reason>, the PR's revise:requested
-# is swapped for revise:attempted + needs-human and the failure comment goes on the PR.
+# is swapped for revise:attempted + needs-human (kept as is on stop_reason billing_blocked, which pauses the
+# factory instead) and the failure comment goes on the PR.
 # Env: RUN_ID, ISSUE, AGENT, GH_TOKEN (the apply token), RUN_URL (optional), PR (optional, revise only).
 set -euo pipefail
 # shellcheck source=lib.sh source-path=SCRIPTDIR
@@ -44,9 +45,14 @@ salvage() {
   if [ "$phase" = "revise" ] && [ -n "$PR" ]; then
     # The work is a PR branch: nothing is pushed to it, the one revise is spent, a human takes over.
     target=$PR kind=pr
-    edit_labels pr "$PR" "revise:attempted,needs-human" "revise:requested" \
-      || warn "salvage: PR label swap failed (ignored)"
-    action='Labels swapped: revise:requested removed, revise:attempted and needs-human added.'
+    if [ "$stop_reason" = "billing_blocked" ]; then
+      # Not the revise's fault: the control plane paused the factory, and the revise retries after resume.
+      action='Labels left as they were: the Gemini project could not pay (prepay balance or spend cap), the factory paused itself, and this revise runs again after it is resumed.'
+    else
+      edit_labels pr "$PR" "revise:attempted,needs-human" "revise:requested" \
+        || warn "salvage: PR label swap failed (ignored)"
+      action='Labels swapped: revise:requested removed, revise:attempted and needs-human added.'
+    fi
   elif gh issue view "$ISSUE" --repo "$TARGET_REPO" --json labels --jq '.labels[].name' | grep -qx 'status:in-progress'; then
     edit_labels issue "$ISSUE" "status:backlog" "status:in-progress" \
       || warn "salvage: label reset failed (ignored)"

@@ -205,3 +205,13 @@ def test_failed_revise_with_nothing_new_pushes_no_backup(tmp_path, env):
     assert "salvage: nothing to save" in p.stderr
     body = (tmp_path / "comment.md").read_text()
     assert "No work was pushed to the PR branch." in body and "Work saved" not in body
+
+
+def test_billing_blocked_revise_keeps_the_pr_labels(tmp_path, env):
+    renv = _revise_env(tmp_path, env)
+    phase(tmp_path, "revise", success=False, stop_reason="billing_blocked", error="Gemini billing blocked")
+    p, calls = salvage(tmp_path, renv)
+    assert p.returncode == 0, p.stderr
+    assert not any(c.startswith("pr edit") for c in calls)
+    body = (tmp_path / "comment.md").read_text()
+    assert "failed in revise (billing_blocked)" in body and "runs again after it is resumed" in body

@@ -74,6 +74,19 @@ def _metrics_usage(metrics) -> dict[str, int]:
             "total_tokens": int(u.get("totalTokens", 0))}
 
 
+def _billing_blocked(e: BaseException) -> bool:
+    """True when a ModelBillingError is anywhere in the chain (strands wraps it in EventLoopException)."""
+    from .gemini import ModelBillingError
+
+    seen: set[int] = set()
+    while e is not None and id(e) not in seen:
+        if isinstance(e, ModelBillingError):
+            return True
+        seen.add(id(e))
+        e = e.__cause__ or e.__context__
+    return False
+
+
 def _write(out: Path, name: str, text: str) -> None:
     (out / name).write_text(text, encoding="utf-8")
 
@@ -229,6 +242,8 @@ def run(args: argparse.Namespace) -> int:
             result.stop_reason = "timeout"
         elif quota is not None and quota.capped:
             result.stop_reason = "quota_cap"
+        elif _billing_blocked(e):
+            result.stop_reason = "billing_blocked"
         else:
             result.stop_reason = "exception"
         result.error = redact(f"{type(e).__name__}: {e}")[:1000]

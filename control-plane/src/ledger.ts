@@ -24,6 +24,17 @@ export function failureAlert(
   return `factory: run ${id}${who ? ` [${who}]` : ""} ${b.status}${reason}${link}`;
 }
 
+// A run the Gemini project could not pay for (prepay balance at zero or a spend cap reached): every later run
+// would fail the same way, so the factory pauses itself until a human resumes it.
+export const BILLING_STOP_REASON = "billing_blocked";
+
+/** Pure: the alert text when a finished run should pause the factory, else null. */
+export function billingPauseAlert(id: string, b: { stop_reason?: string | null }, row: { workflow_run_url?: string | null } | null): string | null {
+  if (b.stop_reason !== BILLING_STOP_REASON) return null;
+  const link = row?.workflow_run_url ? ` ${row.workflow_run_url}` : "";
+  return `factory: PAUSED - Gemini billing blocked on run ${id} (prepay balance or spend cap). Top up or raise the cap, then POST /admin/resume.${link}`;
+}
+
 async function ensureRun(env: Env, id: string, agent: string, phase: string | null, now: string): Promise<void> {
   // Manually dispatched runs report to the ledger without a prior row.
   await env.DB.prepare(
@@ -128,7 +139,11 @@ export async function handleFinished(req: Request, env: Env, ctx: ExecutionConte
   await env.DB.prepare("DELETE FROM locks WHERE run_id = ?").bind(id).run();
   const row = await env.DB.prepare("SELECT * FROM runs WHERE id = ?").bind(id).first<RunRow>();
   if (row) void sendEvent(env, finishedEvent(row, b, nowDate), ctx);
-  if (ALERT_STATUSES.has(b.status)) {
+  const billing = billingPauseAlert(id, b, row);
+  if (billing) {
+    await env.DB.prepare("INSERT INTO config (key, value) VALUES ('paused', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    void sendAlert(env, billing, ctx);
+  } else if (ALERT_STATUSES.has(b.status)) {
     const text = failureAlert(id, { status: b.status, stop_reason: b.stop_reason }, row);
     if (text) void sendAlert(env, text, ctx);
   }

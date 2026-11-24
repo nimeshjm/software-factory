@@ -6,6 +6,9 @@ A 429 arrives as ModelThrottledException (raised `from` the ClientError, strands
 daily-quota check reads the QuotaFailure details off `__cause__`; backing off for hours would only fail the run.
 A per-minute 429 is waited out on the same model (RetryInfo `retryDelay`, capped) before it counts toward a switch:
 switching after strands' 4 s retry moved runs onto the last fallback, whose free-tier daily quota is the smallest.
+A billing block (402 Payment Required when the prepay balance is zero, or a 429 naming a spend cap or depleted
+prepayment credits) stops the run as ModelBillingError: every model on the key fails the same way, so neither a
+wait nor a fallback can help, and strands must not retry it.
 """
 
 from __future__ import annotations
@@ -23,6 +26,29 @@ from strands.models.gemini import GeminiModel
 from strands.types.exceptions import ModelThrottledException
 
 RETRYABLE_SERVER_CODES = frozenset({503})
+BILLING_MARKERS = ("prepayment credits are depleted", "prepayment credits depleted", "spend cap", "spending cap")
+
+
+class ModelBillingError(Exception):
+    """The key's project cannot pay for the request: prepay balance at zero or a monthly spend cap reached."""
+
+
+def is_billing_error(error: BaseException) -> bool:
+    """True for a 402, or any error whose message or details name a spend cap or depleted prepayment credits."""
+    for e in (error, error.__cause__):
+        if e is None:
+            continue
+        if isinstance(e, genai_errors.APIError) and e.code == 402:
+            return True
+        text = f"{e} {getattr(e, 'details', '') or ''}".lower()
+        if any(m in text for m in BILLING_MARKERS):
+            return True
+    return False
+
+
+def _billing_error(error: BaseException) -> ModelBillingError:
+    print(f"[model] billing blocked: {str(error)[:300]}", file=sys.stderr, flush=True)
+    return ModelBillingError(f"Gemini billing blocked (prepay balance or spend cap): {str(error)[:500]}")
 
 
 def is_retryable_server_error(error: BaseException) -> bool:
@@ -173,6 +199,8 @@ class FactoryGeminiModel(GeminiModel):
                     continue
                 raise ModelThrottledException(f"no response within {self.first_event_timeout_s:g}s") from None
             except ModelThrottledException as error:
+                if is_billing_error(error):
+                    raise _billing_error(error) from error
                 if yielded:
                     raise
                 if is_daily_quota_error(error):
@@ -193,6 +221,11 @@ class FactoryGeminiModel(GeminiModel):
                     continue
                 if self._unresponsive("throttled"):
                     continue
+                raise
+            except genai_errors.ClientError as error:
+                # strands re-raises 4xx it does not map (402 among them) as the raw ClientError
+                if is_billing_error(error):
+                    raise _billing_error(error) from error
                 raise
             except genai_errors.ServerError as error:
                 if not is_retryable_server_error(error):

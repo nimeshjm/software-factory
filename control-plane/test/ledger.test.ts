@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildStatus, handleFinished, failureAlert, finishedEvent, startedEvent } from "../src/ledger";
+import { billingPauseAlert, buildStatus, handleFinished, failureAlert, finishedEvent, startedEvent } from "../src/ledger";
 import { sendEvent } from "../src/honeycomb";
 import { computeQuota } from "../src/quota";
 import type { RunRow } from "../src/types";
@@ -40,6 +40,15 @@ describe("failureAlert", () => {
   });
   it("stays quiet for success, denied and lost", () => {
     for (const status of ["success", "denied", "lost"]) expect(failureAlert("r", { status }, row)).toBeNull();
+  });
+});
+
+describe("billingPauseAlert", () => {
+  it("names the run, the cause and how to resume, only for billing_blocked", () => {
+    expect(billingPauseAlert("r1", { stop_reason: "billing_blocked" }, { workflow_run_url: "https://example/run/1" }))
+      .toBe("factory: PAUSED - Gemini billing blocked on run r1 (prepay balance or spend cap). Top up or raise the cap, then POST /admin/resume. https://example/run/1");
+    expect(billingPauseAlert("r1", { stop_reason: "exception" }, null)).toBeNull();
+    expect(billingPauseAlert("r1", {}, null)).toBeNull();
   });
 });
 
@@ -130,6 +139,17 @@ describe("handleFinished", () => {
     expect(res.status).toBe(200);
     return binds[0];
   };
+
+  it("pauses the factory on billing_blocked and only then", async () => {
+    const sqls: string[] = [];
+    const stmt = (sql: string) => ({ bind: () => stmt(sql), run: async () => { sqls.push(sql); return {}; }, first: async () => null });
+    const env = { DB: { prepare: stmt } } as never;
+    for (const stop_reason of ["billing_blocked", "exception"]) {
+      const req = new Request("https://x/runs/r1/finished", { method: "POST", body: JSON.stringify({ status: "failed", stop_reason }) });
+      expect((await handleFinished(req, env, { waitUntil() {} } as never, "r1")).status).toBe(200);
+    }
+    expect(sqls.filter((q) => q.includes("'paused', '1'"))).toHaveLength(1);
+  });
 
   it("stores the error clipped to 300 chars, null when absent", async () => {
     const withErr = await call({ status: "failed", stop_reason: "end_turn", error: "e".repeat(400) });

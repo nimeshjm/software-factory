@@ -7,8 +7,8 @@ from google.genai import errors as genai_errors
 from strands.models.gemini import GeminiModel
 from strands.types.exceptions import ModelThrottledException
 
-from factory.gemini import (FactoryGeminiModel, is_daily_quota_error, is_retryable_server_error, throttle_delay,
-                            unresponsive_reason)
+from factory.gemini import (FactoryGeminiModel, ModelBillingError, is_billing_error, is_daily_quota_error,
+                            is_retryable_server_error, throttle_delay, unresponsive_reason)
 
 
 def _server_error(code: int, status: str) -> genai_errors.ServerError:
@@ -374,3 +374,43 @@ def test_throttle_wait_counts_a_throttle_not_a_call():
     q = QuotaGuard(5, GuardLog())
     q.throttle_wait()
     assert (q.calls, q.throttles) == (0, 1)
+
+
+def _payment_required() -> genai_errors.ClientError:
+    return genai_errors.ClientError(402, {"error": {"code": 402, "message": "Your prepayment credits are depleted.",
+                                                    "status": "PAYMENT_REQUIRED"}})
+
+
+def _spend_cap() -> ModelThrottledException:
+    return _quota_error(MINUTE, "Your project has exceeded its monthly spending cap.")
+
+
+def test_is_billing_error():
+    assert is_billing_error(_payment_required())
+    assert is_billing_error(_spend_cap())
+    assert is_billing_error(ModelThrottledException("429 RESOURCE_EXHAUSTED. Your prepayment credits are depleted."))
+    assert not is_billing_error(_quota_error(MINUTE))
+    assert not is_billing_error(_quota_error(DAILY))
+    assert not is_billing_error(_server_error(503, "UNAVAILABLE"))
+
+
+def test_402_stops_without_wait_or_switch(monkeypatch, capsys):
+    model, used = _fallback_model(monkeypatch, [_payment_required(), None], ["b"], throttle_waits=3)
+    with pytest.raises(ModelBillingError, match="billing blocked"):
+        _drain(model)
+    assert used == ["a"] and model.slept == [] and model.model_switches == []
+    assert "[model] billing blocked" in capsys.readouterr().err
+
+
+def test_spend_cap_429_stops_without_wait_or_switch(monkeypatch):
+    model, used = _fallback_model(monkeypatch, [_spend_cap(), None], ["b"], throttle_waits=3)
+    with pytest.raises(ModelBillingError):
+        _drain(model)
+    assert used == ["a"] and model.slept == [] and model.model_switches == []
+
+
+def test_other_client_errors_pass_through(monkeypatch):
+    model, _ = _fallback_model(monkeypatch, [genai_errors.ClientError(400, {"error": {"code": 400, "message": "bad",
+                                                                                      "status": "INVALID_ARGUMENT"}})], ["b"])
+    with pytest.raises(genai_errors.ClientError):
+        _drain(model)
