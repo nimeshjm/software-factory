@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Model retries per day",
-  "description": "Shows: Failed model requests the fallback logic counted (throttled, stall, server_error, transport_error, daily_quota), per day, agent and model. Reads the factory.model_retry span event.\nWhy it matters: Retries add latency and eat into the call budget. The reason split separates provider problems (server_error, stall) from our own pressure on rate limits (throttled, daily_quota).",
+  "description": "Shows: Failed model requests the fallback logic counted, per day, agent and model, by reason: overload_wait (a Gemini 503 \"high demand\" waited out on the same model, 20/40/60 s), throttled_wait (a per-minute throttle waited out), throttled, stall, server_error, transport_error, daily_quota. Reads the factory.model_retry span event.\nWhy it matters: Retries add latency and eat into the call budget and the run's time limit. The reason split separates provider problems (overload_wait, server_error, stall: Gemini is overloaded, retry later) from our own pressure on rate limits (throttled, throttled_wait, daily_quota). Many overload_wait plus server_error rows explain research timeouts and model_overloaded failures that are not the issue's fault.",
   "query": {
     "calculations": [
       {

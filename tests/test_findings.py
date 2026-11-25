@@ -98,13 +98,13 @@ def test_cli_exit_codes(tmp_path, capsys):
 def test_spike_model_selection(tmp_path):
     cfg = load_config()
     base = resolve_run_spec(cfg, "builder", "implement")
-    for phase, key, model in (("research", "spike_research", "gemini-3.8-flash"), ("implement", "spike", "gemini-3.5-flash-lite")):
+    for phase, key, model in (("research", "spike_research", "gemini-3.5-flash-lite"), ("implement", "spike", "gemini-3.5-flash-lite")):
         s = apply_spike_model(cfg, resolve_run_spec(cfg, "builder", phase), ["spike"])
         assert (s.model_key, s.model_id) == (key, model) and s.params["thinking_config"]["thinking_level"] == "high"
     impl = apply_spike_model(cfg, base, ["spike"])
     res_base = resolve_run_spec(cfg, "builder", "research")
     research = apply_spike_model(cfg, res_base, ["spike"])
-    assert research.fallback_model_ids == ("gemini-4-hydrogen", "gemini-3.5-flash-lite")
+    assert research.fallback_model_ids == ("gemini-3.1-flash-lite", "gemini-4-hydrogen")
     assert research.paid_model_ids == impl.paid_model_ids == ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
     assert impl.fallback_model_ids == ("gemini-3.1-flash-lite", "gemini-4-hydrogen")
     assert (base.max_model_calls, impl.max_model_calls) == (60, 15)

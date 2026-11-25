@@ -13,11 +13,15 @@ def test_resolve_overrides():
     cfg = C.load_config()
     r = C.resolve_run_spec(cfg, "builder", "research")
     assert r.tools == ["read_file", "list_files", "search_files", "fetch_url", "web_search"] and r.max_model_calls == 25
-    # design (research, plan): 3.8 Flash first; the paid key walks the cheap flash-lite chain
-    assert r.model_key == "design" and r.model_id == "gemini-3.8-flash"
-    assert r.fallback_model_ids == ("gemini-4-hydrogen", "gemini-3.5-flash-lite")
+    # research runs on strong (flash-lite): 3.8 Flash and Hydrogen were overloaded too often for a 10-minute phase
+    assert r.model_key == "strong" and r.model_id == "gemini-3.5-flash-lite"
+    assert r.fallback_model_ids == ("gemini-3.1-flash-lite", "gemini-4-hydrogen")
     assert r.paid_model_ids == ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
-    assert r.params["thinking_config"]["thinking_level"] == "high"
+    # design (plan): 3.8 Flash first; the paid key walks the cheap flash-lite chain
+    pl = C.resolve_run_spec(cfg, "builder", "plan")
+    assert pl.model_key == "design" and pl.model_id == "gemini-3.8-flash"
+    assert pl.fallback_model_ids == ("gemini-4-hydrogen", "gemini-3.5-flash-lite")
+    assert pl.params["thinking_config"]["thinking_level"] == "high"
     imp = C.resolve_run_spec(cfg, "builder", "implement")
     assert imp.model_key == "strong" and imp.model_id == "gemini-3.5-flash-lite"
     assert imp.fallback_model_ids == ("gemini-3.1-flash-lite", "gemini-4-hydrogen")

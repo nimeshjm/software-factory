@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Throttles per agent",
-  "description": "Shows: Sum of throttles (retried throttled calls) reported by finished runs, per agent. Reads run.finished.\nWhy it matters: Throttling means the agents are pushing the provider's rate limits: runs slow down and may time out. A climbing count says to spread dispatch out or cut calls per run.",
+  "description": "Shows: Sum of throttles reported by finished runs, per agent: retried throttled calls plus waits on Gemini 503 overloads (overload_wait). Reads run.finished.\nWhy it matters: Each throttle is a wait of up to a minute: runs slow down and may time out. Check Model retries per day for the reason: throttled means we are pushing rate limits (spread dispatch out or cut calls per run); overload_wait means Gemini is overloaded and only time fixes it.",
   "query": {
     "calculations": [
       {
