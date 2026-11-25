@@ -47,11 +47,12 @@ protected:
     - "(?:npm|pnpm|yarn)\\s+(?:run\\s+)?(?:deploy|migrate:remote|eval)\\b"
   env_markers:
     - "EVAL_LIVE"
+  # package.json and migrations/** are editable so agents can land dependency bumps and schema changes. Any
+  # factory PR touching them is autonomy:lit (not in dark_paths), so a human approves it before merge, and
+  # migrations/** stays in risk.high_paths, so those issues stop at the plan for plan:approved.
   paths:
     - "wrangler.jsonc"
-    - "package.json"
     - "eval/cassettes/**"
-    - "migrations/**"
 secrets:
   patterns:
     - "FANTASY_(?:EMAIL|PASSWORD|SESSION_COOKIE)\\s*[=:]\\s*\\S+"
