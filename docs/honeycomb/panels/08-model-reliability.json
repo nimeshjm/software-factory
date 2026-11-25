@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Model reliability",
-  "description": "Model calls (chat spans) against model retries (factory.model_retry events) per model, so a model with many retries per call stands out. Reads chat spans and factory.model_retry span events.",
+  "description": "Shows: Model calls (chat spans) against model retries (factory.model_retry events) per model. Reads chat spans and factory.model_retry span events.\nWhy it matters: A model with many retries per call is slow and unreliable; this is the evidence for demoting it in factory.config.json and keeping runs fast and cheap.",
   "query": {
     "calculations": [
       {

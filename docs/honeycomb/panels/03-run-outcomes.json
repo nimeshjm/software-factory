@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Run outcomes per day",
-  "description": "Runs finished per day by agent and status (success, failed, timeout, lost, denied). Reads run.finished; agent_d backfills old events from run_id.",
+  "description": "Shows: Runs finished per day by agent and status (success, failed, timeout, lost, denied). Reads run.finished; agent_d backfills old events from run_id.\nWhy it matters: Shows throughput and its trend: whether the factory is doing more useful work day over day, and whether a change (prompt, model, config) made outcomes better or worse.",
   "query": {
     "calculations": [
       {

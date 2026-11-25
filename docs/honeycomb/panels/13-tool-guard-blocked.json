@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Tool guard denials",
-  "description": "Tool calls the guard blocked, by agent and rule. Reads the tool_guard.blocked span event.",
+  "description": "Shows: Tool calls the guard blocked, by agent and rule. Reads the tool_guard.blocked span event.\nWhy it matters: The guard is the safety net that stops agents touching forbidden paths or running blocked commands. Denials prove it works; a rising count means a prompt is steering an agent into unsafe actions and wasting turns.",
   "query": {
     "calculations": [
       {

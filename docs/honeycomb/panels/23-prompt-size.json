@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Input tokens per model call",
-  "description": "Median and largest input per model call (chat spans) per day, by agent and phase. The first call of a phase is the fixed prompt; later calls add every tool result kept so far. Context trimming and on-demand context files (2026-11-24) should pull both lines down.",
+  "description": "Shows: Median and largest input tokens per model call (chat spans) per day, by agent and phase. The first call of a phase is the fixed prompt; later calls add every tool result kept so far.\nWhy it matters: Input size drives cost, latency and the risk of hitting token limits. Context trimming and on-demand context files should pull both lines down; a rising line means context is bloating again.",
   "query": {
     "calculations": [
       {

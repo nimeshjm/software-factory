@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Largest sections of the fixed prompt",
-  "description": "Average estimated tokens per section of the system prompt (part system) and of the task message (part task), sent once per phase as factory.task_section events, over 7 days. A heading with #2 is a block that appears twice.",
+  "description": "Shows: Average estimated tokens per section of the system prompt (part system) and of the task message (part task), sent once per phase as factory.task_section events, over 7 days. A heading with #2 is a block that appears twice.\nWhy it matters: Names the exact prompt sections that cost the most, so cuts are targeted rather than guessed; duplicate (#2) blocks are pure waste paid on every call.",
   "query": {
     "calculations": [
       {

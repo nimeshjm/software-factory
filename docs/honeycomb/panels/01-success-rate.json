@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Success rate",
-  "description": "Share of finished runs that succeeded, per agent (AVG of the run_ok derived column over run.finished). The red line is 80%. Reads run.finished.",
+  "description": "Shows: Share of finished runs that succeeded, per agent (AVG of the run_ok derived column over run.finished). The red line is 80%.\nWhy it matters: The headline health number: every failed run spends model quota and wall-clock time without moving an issue forward. An agent below 80% is wasting more than it ships and is the first thing to fix.",
   "query": {
     "calculations": [
       {

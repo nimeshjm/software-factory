@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Files read more than once in a run",
-  "description": "The same file read twice or more in one run over 7 days (read_file and read_context). Some is normal after an edit; a long list means trimmed results are being fetched again.",
+  "description": "Shows: Files read twice or more in one run over 7 days (read_file and read_context), by run and file.\nWhy it matters: Some re-reads are normal after an edit; a long list means trimmed results are being fetched again, paying twice for the same context. Tells us whether trimming is too aggressive.",
   "query": {
     "calculations": [
       {

@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Input tokens by request number",
-  "description": "Average estimated prompt size (factory.prompt.total_tokens) and its history part by request number within a phase, over 7 days. A flat line means the fixed prompt dominates (cut the task message or system prompt); a steep one means the history does (trimming, batching, fewer reads).",
+  "description": "Shows: Average estimated prompt size (factory.prompt.total_tokens) and its history part by request number within a phase, over 7 days.\nWhy it matters: Shows how cost grows over a run. Flat means the fixed prompt dominates (cut the task message or system prompt); steep means the history does (trimming, batching, fewer reads). Points optimisation at the right lever.",
   "query": {
     "calculations": [
       {

@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Tick decisions",
-  "description": "What the tick decided per day, by agent and reason (dispatch, bugs_first, no_eligible_bug, no_eligible_feature, in_flight, mark_lost...): an agent skipped for the same reason for days is stuck behind that gate. Reads tick.decision; reason_d drops the per-issue detail.",
+  "description": "Shows: What the scheduler tick decided per day, by agent and reason (dispatch, bugs_first, no_eligible_bug, no_eligible_feature, in_flight, mark_lost...). Reads tick.decision; reason_d drops the per-issue detail.\nWhy it matters: Explains idle time: when nothing ships, this shows whether there was no work, work was blocked behind a gate, or something was stuck. An agent skipped for the same reason for days is a stalled pipeline.",
   "query": {
     "calculations": [
       {

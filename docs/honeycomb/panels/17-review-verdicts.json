@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Review verdicts",
-  "description": "The reviewer's verdicts per day (approve, request_changes, ...). Reads run.finished with agent_d = reviewer.",
+  "description": "Shows: The reviewer's verdicts per day (approve, request_changes, ...). Reads run.finished with agent_d = reviewer.\nWhy it matters: The automated reviewer is the quality gate before merge. A rising share of request_changes means builders are producing weaker PRs; approving everything would mean the gate is not doing its job.",
   "query": {
     "calculations": [
       {

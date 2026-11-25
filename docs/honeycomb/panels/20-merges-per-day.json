@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Merges per day",
-  "description": "Factory PRs merged per day by autonomy label (lit: a human approved; dark: merged without one). Reads pr.closed with merged = true.",
+  "description": "Shows: Factory PRs merged per day by autonomy label (lit: a human approved; dark: merged without one). Reads pr.closed with merged = true.\nWhy it matters: The value actually delivered to the product, and how much of it needed a human. A growing dark share means more autonomy and less human time per change.",
   "query": {
     "calculations": [
       {

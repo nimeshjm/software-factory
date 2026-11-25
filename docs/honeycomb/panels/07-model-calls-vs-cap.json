@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Model calls vs cap",
-  "description": "Heatmap of model_calls per agent and the daily maximum of calls_ratio (model_calls / reserved_calls; 1.0 means the run used its whole reservation). Reads run.finished.",
+  "description": "Shows: Heatmap of model_calls per agent and the daily maximum of calls_ratio (model_calls / reserved_calls; 1.0 means the run used its whole reservation). Reads run.finished.\nWhy it matters: Shows whether call budgets are sized right. Runs pinned at 1.0 are cut off before finishing (wasted work); runs far below their reservation hold quota other agents could use.",
   "query": {
     "calculations": [
       {

@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Tokens per phase and model",
-  "description": "Input and output tokens from the harness model spans, by agent, phase and model.",
+  "description": "Shows: Input and output tokens from the harness model spans, by agent, phase and model.\nWhy it matters: Tokens are what we pay for and what fills the free quota. This shows which agent and phase consume the most, so optimisation effort goes where the cost is.",
   "query": {
     "calculations": [
       {

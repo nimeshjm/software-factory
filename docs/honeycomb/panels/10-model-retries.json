@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Model retries per day",
-  "description": "Failed model requests the fallback logic counted (throttled, stall, server_error, transport_error, daily_quota), per agent and model. Reads the factory.model_retry span event.",
+  "description": "Shows: Failed model requests the fallback logic counted (throttled, stall, server_error, transport_error, daily_quota), per day, agent and model. Reads the factory.model_retry span event.\nWhy it matters: Retries add latency and eat into the call budget. The reason split separates provider problems (server_error, stall) from our own pressure on rate limits (throttled, daily_quota).",
   "query": {
     "calculations": [
       {

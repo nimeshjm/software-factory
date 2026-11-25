@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Where runs die",
-  "description": "Every run that did not succeed, with the phase, stop reason, error and a link to the workflow run. Reads run.finished with status in failed, timeout, lost, denied.",
+  "description": "Shows: Every run that did not succeed, with the phase, stop reason, error and a link to the workflow run. Reads run.finished with status in failed, timeout, lost, denied.\nWhy it matters: The triage list: goes straight from \"success rate is down\" to the failing phase and its log, so a fix starts in minutes instead of digging through Actions runs.",
   "query": {
     "calculations": [
       {

@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Throttles per agent",
-  "description": "Sum of throttles (retried throttled calls) reported by finished runs, per agent. Reads run.finished.",
+  "description": "Shows: Sum of throttles (retried throttled calls) reported by finished runs, per agent. Reads run.finished.\nWhy it matters: Throttling means the agents are pushing the provider's rate limits: runs slow down and may time out. A climbing count says to spread dispatch out or cut calls per run.",
   "query": {
     "calculations": [
       {

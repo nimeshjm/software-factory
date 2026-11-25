@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Guard events",
-  "description": "Events from the harness guards, by guard and rule. Reads span events whose name ends with .event.",
+  "description": "Shows: Events from the harness guards (context, edit, tool and others), by guard and rule. Reads span events whose name ends with .event.\nWhy it matters: Shows how often the guardrails intervene (truncating context, correcting edits, blocking tools). Frequent interventions point at prompts or limits that need tuning before they turn into failed runs.",
   "query": {
     "calculations": [
       {

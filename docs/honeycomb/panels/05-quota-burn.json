@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Quota burn",
-  "description": "Model calls reported by finished runs per day, stacked by status; the red line is the daily quota of 400. Reads run.finished.",
+  "description": "Shows: Model calls reported by finished runs per day, stacked by status; the red line is the daily quota of 400. Reads run.finished.\nWhy it matters: Model calls are the factory's scarcest resource. This shows how much of the daily budget went to successful work versus failures; hitting the line stops all agents for the day.",
   "query": {
     "calculations": [
       {

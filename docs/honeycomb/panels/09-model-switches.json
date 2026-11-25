@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Model switches",
-  "description": "Fallbacks to another model, by from, to and reason (daily_quota or unresponsive:<detail>). Reads the factory.model_switch span event.",
+  "description": "Shows: Fallbacks to another model, by from, to and reason (daily_quota or unresponsive:<detail>). Reads the factory.model_switch span event.\nWhy it matters: Fallbacks keep runs alive but usually onto a different (often weaker or paid) model. Frequent switches mean the primary model is out of quota or unhealthy, which affects both quality and cost.",
   "query": {
     "calculations": [
       {

@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Retry loops",
-  "description": "Subjects with more than one failed, timeout or lost run in the last 24 hours, per agent: the issue keeps failing. Reads run.finished.",
+  "description": "Shows: Subjects (issues) with more than one failed, timeout or lost run in the last 24 hours, per agent. Reads run.finished.\nWhy it matters: An issue that fails over and over keeps burning quota on the same dead end and blocks the backlog behind it. Each row is a candidate to park and fix by hand.",
   "query": {
     "calculations": [
       {

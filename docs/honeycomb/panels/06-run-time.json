@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Run time and queue time",
-  "description": "P50 and P95 of duration_s (started to finished) and P95 of queue_s (dispatched to started) per agent. Reads run.finished.",
+  "description": "Shows: P50 and P95 of duration_s (started to finished) and P95 of queue_s (dispatched to started) per agent. Reads run.finished.\nWhy it matters: How long an issue waits and how long it takes to turn into a PR: the factory's lead time. Rising run time points to bloated context or slow models; rising queue time to runner or concurrency limits.",
   "query": {
     "calculations": [
       {

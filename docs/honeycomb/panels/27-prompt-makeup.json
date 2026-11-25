@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "What each model call's input is made of",
-  "description": "Average estimated tokens (chars / 4) per model request by part, from factory.prompt events, by agent and phase over 7 days. system, tools and task are the fixed prompt every call resends; tool_results, assistant_text, tool_args and edit_args are the history. Cut the biggest fixed part first; a large edit_args means edit_file payloads are being resent.",
+  "description": "Shows: Average estimated tokens (chars / 4) per model request by part, from factory.prompt events, by agent and phase over 7 days. system, tools and task are the fixed prompt every call resends; tool_results, assistant_text, tool_args and edit_args are the history.\nWhy it matters: Says where to cut to make every call cheaper: the biggest fixed part first, since it is paid on every request. A large edit_args means edit_file payloads are being resent.",
   "query": {
     "calculations": [
       {

@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Tool calls per model call",
-  "description": "Model calls (chat) against tool calls (factory.tool_call) by agent and phase over 7 days. Tool calls well above model calls means reads are batched into one turn; about equal means one read per turn, each resending the whole conversation.",
+  "description": "Shows: Model calls (chat) against tool calls (factory.tool_call) by agent and phase over 7 days.\nWhy it matters: Tool calls well above model calls means reads are batched into one turn; about equal means one read per turn, each resending the whole conversation. Better batching means fewer, cheaper model calls per run.",
   "query": {
     "calculations": [
       {

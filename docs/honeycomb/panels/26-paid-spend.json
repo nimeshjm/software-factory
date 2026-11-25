@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "Paid Gemini spend per day",
-  "description": "Estimated paid-key spend (USD, from token usage and billing.prices_usd_per_m) per UTC day, stacked by agent; the line is the daily paid cap. Runs on the free key cost nothing. Reads run.finished paid_cost_usd.",
+  "description": "Shows: Estimated paid-key spend (USD, from token usage and billing.prices_usd_per_m) per UTC day, stacked by agent; the line is the daily paid cap. Runs on the free key cost nothing. Reads run.finished paid_cost_usd.\nWhy it matters: The direct money cost of the factory. Shows which agent spends it and whether we are near the cap, at which point work stops for the day.",
   "query": {
     "calculations": [
       {

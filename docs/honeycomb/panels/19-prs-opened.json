@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "PRs opened per day",
-  "description": "Factory PRs opened per day by agent (builder, bug-fixer). Reads pr.opened.",
+  "description": "Shows: Factory PRs opened per day by agent (builder, bug-fixer). Reads pr.opened.\nWhy it matters: Raw delivery output: how many changes the factory proposes per day. Read with PR acceptance to tell productive volume from noise.",
   "query": {
     "calculations": [
       {

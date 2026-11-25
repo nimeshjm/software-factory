@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "PR outcomes",
-  "description": "Factory PRs closed in the last 30 days by outcome (merged_first_pass, merged_after_revise, closed_unmerged), autonomy label and agent. Reads pr.closed.",
+  "description": "Shows: Factory PRs closed in the last 30 days by outcome (merged_first_pass, merged_after_revise, closed_unmerged), autonomy label and agent. Reads pr.closed.\nWhy it matters: Breaks acceptance down into counts so the waste is visible: every closed_unmerged PR is a full build that delivered nothing. The autonomy split shows how much ships without a human in the loop.",
   "query": {
     "calculations": [
       {

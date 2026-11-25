@@ -54,7 +54,7 @@ All wrappers with `dry_run=true`, then `dry_run=false`, then control-plane dispa
 
 ## Honeycomb board
 
-Board link: [factory](https://ui.eu1.honeycomb.io/nimeshjm-personal/environments/software-factory/board/x9-5VWLvd5Ju) (id in `docs/honeycomb/board.json`; re-running `scripts/honeycomb-board.sh` updates it in place and adds panels whose columns have appeared since).
+Board link: [factory](https://ui.eu1.honeycomb.io/nimeshjm-personal/environments/software-factory/board/yb-Lgtn8QgrJ) (id in `docs/honeycomb/board.json`; re-running `scripts/honeycomb-board.sh` updates it in place and adds panels whose columns have appeared since).
 
 The board answers "are the agents' runs healthy?" from two Honeycomb datasets in the EU environment, last 7 days: `factory` (control-plane events: panels 01-07, 11 and 15-17) and `software-factory` (the harness's OTLP spans and span events: panels 08-10 and 12-14; the two cannot be joined), with `agent` and `dry_run` as board filters. It is code: `docs/honeycomb/derived_columns.json`, `docs/honeycomb/panels/*.json` (one saved query, annotation and panel each) and `docs/honeycomb/board.json`; the event fields are in `CONTRACTS.md` under "Honeycomb events".
 

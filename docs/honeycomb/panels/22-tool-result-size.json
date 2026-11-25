@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Tool result size per call",
-  "description": "Typical and worst result size (tokens) per tool call, by tool and agent, over 7 days. A high P95 for read_file means whole files are read instead of line ranges or searches.",
+  "description": "Shows: Typical (P50), P95 and worst result size in tokens per tool call, by tool and agent, over 7 days.\nWhy it matters: Finds wasteful tool habits, e.g. a high P95 for read_file means whole files are read instead of line ranges or searches. Fixing that cuts cost and keeps runs under their token limits.",
   "query": {
     "calculations": [
       {

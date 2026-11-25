@@ -1,7 +1,7 @@
 {
   "dataset": "software-factory",
   "name": "Tool result tokens",
-  "description": "Tokens each tool put into the context over 7 days (result size as the model saw it, after truncation; about 4 chars per token), by tool. Every later call in the phase resends these, so the top rows are where the input budget goes. Reads factory.tool_call span events.",
+  "description": "Shows: Tokens each tool put into the context over 7 days (result size as the model saw it, after truncation; about 4 chars per token), by tool, with call counts. Reads factory.tool_call span events.\nWhy it matters: Every tool result is resent on each later call in the phase, so these tokens multiply. The top rows are where the input budget (and paid spend) goes, and the first place to trim.",
   "query": {
     "calculations": [
       {

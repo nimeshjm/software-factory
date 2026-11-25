@@ -1,7 +1,7 @@
 {
   "dataset": "factory",
   "name": "PR acceptance",
-  "description": "Of the factory PRs closed in the last 30 days, the share merged (AVG pr_merged) and the share merged without a revise round (AVG pr_first_pass), per agent. Reads pr.closed.",
+  "description": "Shows: Of the factory PRs closed in the last 30 days, the share merged (AVG pr_merged) and the share merged without a revise round (AVG pr_first_pass), per agent. Reads pr.closed.\nWhy it matters: The quality measure of the factory's output: how much of what it produces is good enough to ship, and how often it gets it right first time. Low first-pass rates mean review cycles and human time.",
   "query": {
     "calculations": [
       {
