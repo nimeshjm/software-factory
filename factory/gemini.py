@@ -57,18 +57,25 @@ class KeyTier:
     paid: bool
 
 
-# USD per 1M tokens: {"input": x, "output": y}. Unknown models are priced at the dearest listed one.
+# USD per 1M tokens: {"input": x, "output": y, "cached_input": z}. Unknown models are priced at the dearest listed one.
+# `cached_input` is the price of input Gemini serves from its implicit cache (usage cacheReadInputTokens, which
+# inputTokens includes); without it cache reads cost CACHED_INPUT_FACTOR x input, Google's 90% discount.
 Prices = Mapping[str, Mapping[str, float]]
+CACHED_INPUT_FACTOR = 0.1
 
 
 def request_cost_usd(model_id: str, usage: Mapping[str, Any], prices: Prices) -> float:
-    """Estimated cost of one request from strands usage (inputTokens, outputTokens incl. thinking); cache reads at full price."""
+    """Estimated cost of one request from strands usage: uncached input, cache reads at the cached price, and
+    outputTokens (thinking included)."""
     if prices:
         price = prices.get(model_id) or max(prices.values(), key=lambda p: (p["input"], p["output"]))
     else:
         price = {"input": 0.0, "output": 0.0}
-    return (int(usage.get("inputTokens", 0)) * float(price["input"])
-            + int(usage.get("outputTokens", 0)) * float(price["output"])) / 1_000_000
+    inp = int(usage.get("inputTokens", 0) or 0)
+    cached = min(max(int(usage.get("cacheReadInputTokens", 0) or 0), 0), inp)
+    cached_price = float(price.get("cached_input", float(price["input"]) * CACHED_INPUT_FACTOR))
+    return ((inp - cached) * float(price["input"]) + cached * cached_price
+            + int(usage.get("outputTokens", 0) or 0) * float(price["output"])) / 1_000_000
 
 
 def is_billing_error(error: BaseException) -> bool:

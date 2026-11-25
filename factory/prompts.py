@@ -112,6 +112,14 @@ def _context_files(ctx: Path, order: list[str]) -> list[Path]:
 
 
 PLAN_MARKER = "<!-- factory:plan -->"
+# Phases that act on one issue or PR and never use the open issue and PR lists (research looks for overlapping work,
+# triage and the incident responder dedupe against them). The 108 implement prompt spent 11.4k of 29.3k chars on them.
+NO_WORK_LISTS = frozenset({("builder", "plan"), ("builder", "implement"), ("builder", "revise"),
+                           ("bug-fixer", "plan"), ("bug-fixer", "implement"), ("bug-fixer", "revise"),
+                           ("reviewer", "review")})
+# factory.json keys the system prompt's Target profile already renders, plus the deploy, smoke and Honeycomb settings
+# only the verifier and incident responder read; dropped from factory.json for the NO_WORK_LISTS phases.
+PROFILE_KEYS = frozenset({"protected", "secrets", "risk", "context_files", "web", "honeycomb", "smoke", "deploy"})
 FAILED_CONCLUSIONS = frozenset({"failure", "timed_out", "cancelled", "action_required", "error"})
 _FAIL_ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*fail\s*\|\s*([^|]*?)\s*\|\s*$", re.IGNORECASE)
 _VERDICT_LINE = re.compile(r"^(request_changes|needs_human|comment):\s*(.+)$", re.IGNORECASE)
@@ -160,6 +168,8 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
     rest (name, size, first heading) for the `read_context` tool."""
     d = Path(inputs_dir)
     out: list[str] = []
+    lean = (agent, phase) in NO_WORK_LISTS
+    plan_attached = any((base / "plan.md").is_file() for base in [d, *(extra_dirs or [])])
     run = _load(d, "run.json") or {}
     pr = _load(d, "pr.json")
     out.append(f"Agent: {agent}\nPhase: {phase}")
@@ -184,8 +194,8 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
                    f"author association: {issue.get('authorAssociation')})")
         out.append(untrusted(f"issue #{n}", f"Title: {issue.get('title')}\n\n{issue.get('body') or ''}"))
         for i, c in enumerate(issue.get("comments") or [], 1):
-            if pr and pr.get("plan_comment") and PLAN_MARKER in str(c.get("body") or ""):
-                continue  # the same plan is inlined once below as the PR's plan comment
+            if (plan_attached or (pr and pr.get("plan_comment"))) and PLAN_MARKER in str(c.get("body") or ""):
+                continue  # the same plan is inlined once: as the plan.md artifact or the PR's plan comment
             who = (c.get("author") or {}).get("login") if isinstance(c.get("author"), dict) else c.get("author")
             out.append(untrusted(f"issue #{n} comment {i} by {who} ({c.get('authorAssociation')})", c.get("body", "")))
 
@@ -211,13 +221,17 @@ def build_task_message(inputs_dir: str | Path, agent: str, phase: str, extra_dir
             out.append(untrusted(f"pr #{n} diff", diff))
 
     for name, label in (("issues.json", "open issues"), ("prs.json", "open pull requests")):
-        data = _load(d, name)
+        data = None if lean else _load(d, name)
         if data is not None:
             out.append(f"## {label}")
             out.append(untrusted(name, json.dumps(data, indent=1)))
 
     factory = _load(d, "factory.json")
-    if factory is not None:
+    if factory is not None and lean and isinstance(factory, dict):
+        slim = {k: v for k, v in factory.items() if k not in PROFILE_KEYS}
+        out.append("## factory.json (from target main; protected paths, risk, secrets and context files are in the "
+                   "Target profile)\n```json\n" + json.dumps(slim, separators=(",", ":")) + "\n```")
+    elif factory is not None:
         out.append("## factory.json (from target main)\n```json\n" + json.dumps(factory, indent=1) + "\n```")
     deploy = _load(d, "deploy.json")
     if deploy is not None:

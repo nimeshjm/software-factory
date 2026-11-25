@@ -24,10 +24,10 @@
     "run_paid_cap_usd": 0.3,
     "prices_source": "Gemini Developer API pricing page (aistudio.google.com/docs/pricing), read 2026-11-24. gemini-3.8-flash is $0.75/$3.75 until 2026-12-31 and $1.50/$7.50 from 2027-01-01; the later price is used. Unknown models are priced at the dearest entry.",
     "prices_usd_per_m": {
-      "gemini-3.5-flash-lite": {"input": 0.3, "output": 2.5},
-      "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.5},
-      "gemini-3.8-flash": {"input": 1.5, "output": 7.5},
-      "gemini-4-hydrogen": {"input": 1.5, "output": 7.5}
+      "gemini-3.5-flash-lite": {"input": 0.3, "output": 2.5, "cached_input": 0.03},
+      "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.5, "cached_input": 0.025},
+      "gemini-3.8-flash": {"input": 1.5, "output": 7.5, "cached_input": 0.15},
+      "gemini-4-hydrogen": {"input": 1.5, "output": 7.5, "cached_input": 0.15}
     }
   },
   "quota": {

@@ -601,3 +601,11 @@ def test_paid_key_alone_starts_on_the_paid_chain(monkeypatch):
     model, used = _paid_chain_model(monkeypatch, [None], [PAID])
     _drain(model)
     assert used == [("kp", "cheap")] and model.model_ids_used == ["cheap"] and model.fallback_model_ids == ["cheap2"]
+
+
+def test_cache_reads_are_priced_at_the_cached_rate():
+    prices = {"m": {"input": 1.0, "output": 2.0, "cached_input": 0.25}, "n": {"input": 1.0, "output": 2.0}}
+    usage = {"inputTokens": 1_000_000, "cacheReadInputTokens": 800_000, "outputTokens": 0}
+    assert request_cost_usd("m", usage, prices) == pytest.approx(0.2 + 0.2)
+    assert request_cost_usd("n", usage, prices) == pytest.approx(0.2 + 0.08)  # default 10% of input
+    assert request_cost_usd("m", {"inputTokens": 10, "cacheReadInputTokens": 99}, prices) == pytest.approx(10 * 0.25 / 1e6)
