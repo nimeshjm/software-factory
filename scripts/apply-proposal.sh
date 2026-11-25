@@ -179,7 +179,7 @@ apply_plan() {
   local gate hold needs_human footer
   gate="$(plan_gate "$f")" || die "plan-gate failed"
   hold="$(jq -er '.hold | tostring' <<<"$gate")" || die "plan-gate returned '$gate'"
-  needs_human="$(jq -r 'any(.reasons[]; . == "needs_human" or startswith("protected:"))' <<<"$gate")"
+  needs_human="$(jq -r 'any(.reasons[]; . == "needs_human" or . == "empty_plan" or startswith("protected:"))' <<<"$gate")"
   footer="$(amigos_footer)"
   { printf '%s\n' "$PLAN_MARKER"
     jq -r '"<!-- factory:plan-files " + ({files: .files} | tojson) + " -->"' "$f"
@@ -194,6 +194,7 @@ apply_plan() {
                        elif any($gate.reasons[]; startswith("protected:")) then
                          "held: plan edits protected paths " + ([$gate.reasons[] | select(startswith("protected:")) | "`" + .[10:] + "`"] | join(", "))
                          + "; agents cannot edit them (factory.yml protected.paths). Make the change by hand or change the profile, then remove needs-human and set status:backlog"
+                       elif any($gate.reasons[]; . == "empty_plan") then "held: the plan lists no files to change; read it, fix the issue or the profile, then remove needs-human and set status:backlog to plan again"
                        elif any($gate.reasons[]; . == "needs_human") then "held: needs_human; fix the issue, remove needs-human and set status:backlog"
                        else "held: " + ($gate.reasons | join(", ")) + "; add plan:approved to continue" end) + " |"
       + (if $amigos != "" then "\n| Amigos | " + $amigos + " |" else "" end) + "\n"' "$f"
@@ -202,10 +203,11 @@ apply_plan() {
   } >"$TMP/plan.md"
   upsert_comment "$ISSUE" "$PLAN_MARKER" "$TMP/plan.md"
 
+  # A held plan is a new plan: an earlier plan:approved was for the plan it replaces, so it is removed.
   if [ "$needs_human" = "true" ]; then
-    edit_labels issue "$ISSUE" "status:plan-review,needs-human" "status:backlog,status:in-progress"
+    edit_labels issue "$ISSUE" "status:plan-review,needs-human" "status:backlog,status:in-progress,plan:approved"
   elif [ "$hold" = "true" ]; then
-    edit_labels issue "$ISSUE" "status:plan-review" "status:backlog,status:in-progress"
+    edit_labels issue "$ISSUE" "status:plan-review" "status:backlog,status:in-progress,plan:approved"
   else
     edit_labels issue "$ISSUE" "status:in-progress" "status:backlog,status:plan-review"
   fi

@@ -425,7 +425,7 @@ export function buildDashboard(input: DashboardInput): DashboardDoc {
   const stateLike = {
     openIssues: issues.map(toIssueInfo),
     openPRs: openPRInfos,
-    recentRuns: input.runs.map((r) => ({ agent: r.agent, subject: r.subject, dispatchedAt: r.dispatched_at, status: r.status })),
+    recentRuns: input.runs.map((r) => ({ agent: r.agent, subject: r.subject, dispatchedAt: r.dispatched_at, status: r.status, stopReason: r.stop_reason ?? null })),
   };
   const titleOf = new Map(issues.map((i) => [i.number, i.title]));
 

@@ -15,7 +15,7 @@ export async function loadTickState(env: Env, now: Date): Promise<TickState> {
   const since = new Date(now.getTime() - 26 * 3600_000).toISOString();
   const [inflight, recent] = await Promise.all([
     env.DB.prepare("SELECT id, agent, subject, dispatched_at, reserved_calls FROM runs WHERE status IN ('dispatched','started')").all<RunRow>(),
-    env.DB.prepare("SELECT agent, subject, dispatched_at, status FROM runs WHERE dispatched_at >= ?").bind(since).all<RunRow>(),
+    env.DB.prepare("SELECT agent, subject, dispatched_at, status, stop_reason FROM runs WHERE dispatched_at >= ?").bind(since).all<RunRow>(),
   ]);
   const base: TickState = {
     paused,
@@ -28,7 +28,7 @@ export async function loadTickState(env: Env, now: Date): Promise<TickState> {
       timeoutMinutes: agentSpec(r.agent).timeoutMinutes,
       reservedCalls: r.reserved_calls,
     })),
-    recentRuns: (recent.results ?? []).map((r) => ({ agent: r.agent, subject: r.subject, dispatchedAt: r.dispatched_at, status: r.status })),
+    recentRuns: (recent.results ?? []).map((r) => ({ agent: r.agent, subject: r.subject, dispatchedAt: r.dispatched_at, status: r.status, stopReason: r.stop_reason ?? null })),
     openPRs: [],
     openIssues: [],
     agentSpecs: AGENT_SPECS,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planTick, parseDependencies, failureBackoff, reviseCandidates, type TickState, type IssueInfo, type RecentRun } from "../src/preflight";
+import { planTick, parseDependencies, failureBackoff, reviseCandidates, overloadedReviews, type TickState, type IssueInfo, type RecentRun } from "../src/preflight";
 import { AGENT_SPECS } from "../src/config";
 
 const NOW = new Date("2026-10-21T10:07:00Z");
@@ -302,5 +302,24 @@ describe("planTick revise", () => {
   it("backed-off revise falls through to the normal queue", () => {
     const d = planTick(base({ openPRs: [revPR(40, "feat/7-thing")], openIssues: [feat(8)], recentRuns: [rr("failed", 30, "revise:7")] }), NOW);
     expect(dispatched(d).map((x) => x.subject)).toEqual(["issue:8"]);
+  });
+});
+
+describe("overloadedReviews", () => {
+  const pr = (number: number, labels: string[] = []) => ({ number, headRef: `feat/${number}-x`, body: "", author: "app/software-factory-agent-bot", labels });
+  const ov = (minutesAgo: number, n = 9): RecentRun => ({ ...rr("failed", minutesAgo, `pr:${n}`, "reviewer"), stopReason: "model_overloaded" });
+
+  it("retries the latest overloaded review after the wait, lowest PR first", () => {
+    const state = { openPRs: [pr(9), pr(4)], recentRuns: [ov(61), { ...ov(70, 4) }] };
+    expect(overloadedReviews(state, NOW)).toEqual([4, 9]);
+    expect(dispatched(planTick(base(state), NOW))[0]).toMatchObject({ agent: "reviewer", subject: "pr:4", inputs: { pr: "4" } });
+  });
+  it("waits, respects later runs, needs-human, other failures and the cap", () => {
+    expect(overloadedReviews({ openPRs: [pr(9)], recentRuns: [ov(30)] }, NOW)).toEqual([]);
+    expect(overloadedReviews({ openPRs: [pr(9)], recentRuns: [ov(90), rr("success", 20, "pr:9", "reviewer")] }, NOW)).toEqual([]);
+    expect(overloadedReviews({ openPRs: [pr(9, ["needs-human"])], recentRuns: [ov(90)] }, NOW)).toEqual([]);
+    expect(overloadedReviews({ openPRs: [pr(9)], recentRuns: [{ ...rr("failed", 90, "pr:9", "reviewer"), stopReason: "exception" }] }, NOW)).toEqual([]);
+    expect(overloadedReviews({ openPRs: [pr(9)], recentRuns: [ov(300), ov(200), ov(100)] }, NOW)).toEqual([]);
+    expect(overloadedReviews({ openPRs: [], recentRuns: [ov(90)] }, NOW)).toEqual([]);
   });
 });

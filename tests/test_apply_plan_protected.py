@@ -65,3 +65,18 @@ def test_label_hold_is_unchanged(tmp_path):
     body, calls = apply(tmp_path, {"hold": True, "reasons": ["label:risk:high"]})
     assert "held: label:risk:high; add plan:approved to continue" in body
     assert any("--add-label status:plan-review " in c + " " and "needs-human" not in c for c in calls)
+
+
+def test_empty_plan_hold_needs_a_human_and_drops_the_approval(tmp_path):
+    body, calls = apply(tmp_path, {"hold": True, "reasons": ["empty_plan"]}, files=())
+    assert "held: the plan lists no files to change;" in body
+    edit = [c for c in calls if "issue edit 121" in c]
+    assert any("--add-label status:plan-review,needs-human" in c and "plan:approved" in c for c in edit)
+
+
+def test_any_hold_removes_an_earlier_plan_approval(tmp_path):
+    _, calls = apply(tmp_path, {"hold": True, "reasons": ["label:risk:high"]})
+    assert any("--remove-label" in c and "plan:approved" in c for c in calls if "issue edit 121" in c)
+    (tmp_path / "go").mkdir()
+    _, calls = apply(tmp_path / "go", {"hold": False, "reasons": []})
+    assert not any("plan:approved" in c for c in calls if "issue edit 121" in c)

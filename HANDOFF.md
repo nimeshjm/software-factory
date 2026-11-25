@@ -8,7 +8,7 @@ Rewritten 2026-11-25. The history before that is in `git log` (the 2026-11-23 an
 1. **Merge target PR 139, then send PR 138 back for a revise.** Owner rule (2026-11-25): agents may write migrations; PRs touching them are reviewed by the factory and approved only by a human. PR 139 removes `migrations/**` from the target's `protected.paths` (it stays in `risk.high_paths`, so plans stop for `plan:approved`, and outside `dark_paths`, so every such PR is `autonomy:lit`); `examples/fantasy-football/factory.yml` mirrors it, and also drops `package.json`, matching the target since PR 135. PR 138 (#108) lacks `migrations/0006_player_awards.sql` because the old rule blocked it; after 139 merges: `gh pr edit 138 -R nimeshjm/fantasy-football --remove-label needs-human --add-label revise:requested`. The revise checklist carries the reviewer's failed `acceptance` row (the missing migration).
 2. **#109 and #110: rescope or close.** Spike #107 found no source for player of the match or month (only `events[].top_element` and the dream-team flags, used since #125). Rescope them to the player-of-the-week proxy, then add `factory:accepted` (the tick shows them `author-not-trusted` until then). Epic #106 is a tracking issue only; PR 137 is closed (branch kept).
 3. **Re-run `HONEYCOMB_CONFIG_KEY=... scripts/honeycomb-board.sh`** once a builder or reviewer run on `9dd65f6` or later has finished: panels 21, 22 and 27 to 29 are skipped until their columns exist (`factory.tool.result_tokens`, `factory.prompt.*`, `factory.task.*`). 30 (cached input) can apply now.
-4. **Security bugs #119 (`sharp`) and #120 (`undici`), priority 1, are in plan review with `needs-human`** (transitive dependencies, so the apply step requires a human). Approve their plans or bump them by hand; while they are open and `needs-human` they do not block the builder (`urgentBug` ignores `needs-human`).
+4. **Security bugs #119 (`sharp`) and #120 (`undici`), priority 1:** they re-plan on their own (see Built 2026-11-25); approve the new plans when they post. While they are open without `needs-human` the builder waits (`bugs_first`).
 5. **Compare `paid_cost_usd` with AI Studio Spend after a week.** Cache reads are now priced at 10% of input (`cached_input`); prices are third-party listings.
 
 **First live proofs to check on the next runs** (Honeycomb `software-factory` dataset, or the run log)
@@ -16,8 +16,11 @@ Rewritten 2026-11-25. The history before that is in `git log` (the 2026-11-23 an
 - *Prompt cuts:* builder implement's first `chat` span under about 11k input tokens (#108 was 14.8k); panel 29 shows no `open issues` section for implement, plan, revise or review; panel 27 `task_tokens` near 3.5k for builder implement.
 - *Earlier 11-24 changes, still unproven live:* `[edit_guard]` nudges on a revise that reads without editing; `read_context` in `factory.tool_call` names; tool calls above model calls in panel 24 (batched reads); `[model] <id> throttled (per minute); waiting <n>s` with no switch.
 
+**Built 2026-11-25 (`CONTRACTS.md` Plan hold, Tick candidates)**
+- *Empty plans.* #119 and #120 failed implement twice with `no_changes`: their approved plans dated from when `package.json` was protected and listed no files. Now a plan with no files (not a spike) holds with `empty_plan` and `needs-human`; an already approved plan with no files is planned again instead of implemented; and any held plan removes `plan:approved`, so a new plan always needs a new approval. #119 and #120 need no relabel: after their backoff the next tick re-plans them, and the new plans stop for your approval.
+- *Overloaded reviews retried.* The tick re-dispatches a factory-PR review that stopped `model_overloaded`, 60 minutes later, at most 3 times in 26 h.
+
 **Gaps known and not built**
-- A reviewer that stops `model_overloaded` is not retried: factory-PR reviews are webhook-driven only (push, check suite, approval). A tick check that re-dispatches such a review is the fix.
 - `model_overloaded` failures count toward the failure cap (3 in 24 h) like any failure.
 - Unverified: a mid-phase switch between Gemini 3 and Gemini 4 models (thought signatures) on design and review; 3.8 Flash's real free requests per day (20 per the spike notes).
 

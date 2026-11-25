@@ -73,14 +73,14 @@ def _write(tmp_path, name, obj):
 
 def test_plan_gate_cli(tmp_path, capsys):
     factory = _write(tmp_path, "factory.json", {"plan_review": {"hold_on": ["risk:high"]}})
-    plan = _write(tmp_path, "proposal.json", {"needs_human": False})
+    plan = _write(tmp_path, "proposal.json", {"needs_human": False, "files": ["a.py"]})
     issue = _write(tmp_path, "issue.json", {"labels": [{"name": "risk:high"}, "feature"]})
     assert policy_main(["plan-gate", "--issue", issue, "--factory", factory, "--plan", plan]) == 0
     assert json.loads(capsys.readouterr().out) == {"hold": True, "reasons": ["label:risk:high"]}
     issue = _write(tmp_path, "issue.json", {"labels": ["risk:high", "plan:approved"]})
     policy_main(["plan-gate", "--issue", issue, "--factory", factory, "--plan", plan])
     assert json.loads(capsys.readouterr().out) == {"hold": False, "reasons": []}
-    nh = _write(tmp_path, "nh.json", {"needs_human": True})
+    nh = _write(tmp_path, "nh.json", {"needs_human": True, "files": ["a.py"]})
     policy_main(["plan-gate", "--issue", str(tmp_path / "missing.json"), "--factory", factory, "--plan", nh])
     assert json.loads(capsys.readouterr().out) == {"hold": True, "reasons": ["needs_human"]}
 
@@ -123,3 +123,18 @@ def test_baseline_globs_match_tool_guard():
     from factory.policy.protected import BASELINE_GLOBS
 
     assert tuple(g for _r, g, _t, _d in BASELINE_PATH_RULES) == BASELINE_GLOBS
+
+
+def test_empty_plan_holds_even_when_approved_but_not_for_a_spike(tmp_path, capsys):
+    factory = _write(tmp_path, "factory.json", {"plan_review": {"hold_on": ["risk:high"]}})
+    plan = _write(tmp_path, "proposal.json", {"needs_human": False, "files": []})
+    issue = _write(tmp_path, "issue.json", {"labels": ["risk:low"]})
+    policy_main(["plan-gate", "--issue", issue, "--factory", factory, "--plan", plan])
+    assert json.loads(capsys.readouterr().out) == {"hold": True, "reasons": ["empty_plan"]}
+    issue = _write(tmp_path, "issue.json", {"labels": ["risk:high", "plan:approved"]})
+    policy_main(["plan-gate", "--issue", issue, "--factory", factory, "--plan", plan])
+    assert json.loads(capsys.readouterr().out) == {"hold": True, "reasons": ["empty_plan"]}
+    issue = _write(tmp_path, "issue.json", {"labels": ["spike", "risk:low"]})
+    policy_main(["plan-gate", "--issue", issue, "--factory", factory, "--plan", plan])
+    assert json.loads(capsys.readouterr().out) == {"hold": False, "reasons": []}
+    assert plan_gate(["risk:low"], {}, False).hold is False  # files not passed: no empty check

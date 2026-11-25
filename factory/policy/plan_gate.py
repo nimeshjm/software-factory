@@ -10,6 +10,8 @@ from .globs import match_glob
 from .protected import protected_globs
 
 APPROVED = "plan:approved"
+SPIKE = "spike"
+EMPTY_PLAN = "empty_plan"
 
 
 @dataclass
@@ -29,10 +31,16 @@ def _hold_on(profile: dict[str, Any] | TargetProfile | None) -> list[str]:
 
 def plan_gate(labels: list[str], profile: dict[str, Any] | TargetProfile | None, needs_human: bool,
               files: list[str] | None = None) -> PlanGateDecision:
-    """Hold after the plan when it needs a human, names a protected path, or a hold_on label is set without plan:approved."""
+    """Hold after the plan when it needs a human, names a protected path, lists no files (`empty_plan`, not for a
+    spike, whose output is findings), or a hold_on label is set without plan:approved.
+
+    `files=None` means the caller did not pass the plan's files (no protected or empty check); `[]` is an empty plan:
+    approving one only runs an implement with nothing to change (#119 and #120, 2026-11-25)."""
     reasons: list[str] = ["needs_human"] if needs_human else []
     globs = protected_globs(profile)
     reasons += [f"protected:{f}" for f in (files or []) if any(match_glob(str(f), g) for g in globs)]
+    if files is not None and not files and SPIKE not in labels:
+        reasons.append(EMPTY_PLAN)
     if APPROVED not in labels:
         reasons += [f"label:{x}" for x in _hold_on(profile) if x in labels]
     return PlanGateDecision(bool(reasons), reasons)

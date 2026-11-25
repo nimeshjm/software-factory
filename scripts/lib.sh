@@ -135,6 +135,14 @@ fetch_plan_comment() {
       '[.[][] | select((.body | contains($m)) and (.user.login | endswith("[bot]"))) | .body] | last // empty'
 }
 
+# plan_lists_no_files <plan comment body>: true when its `<!-- factory:plan-files {...} -->` marker lists no files.
+# A plan without the marker (older plans) is not treated as empty.
+plan_lists_no_files() {
+  local marker
+  marker="$(printf '%s\n' "$1" | sed -n 's/^<!-- factory:plan-files \(.*\) -->$/\1/p' | head -1)"
+  [ -n "$marker" ] && jq -e '(.files // []) | length == 0' <<<"$marker" >/dev/null 2>&1
+}
+
 # fetch_pr_json <number>: stdout pr.json per CONTRACTS.md.
 fetch_pr_json() {
   local n=$1 tmp raw linked

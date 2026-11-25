@@ -14,6 +14,8 @@ export interface RecentRun {
   dispatchedAt: string;
   /** Ledger status: dispatched, started, success, failed, timeout, denied or lost. */
   status: string;
+  /** The finished run's stop_reason (null until it reports). */
+  stopReason?: string | null;
 }
 export interface PRInfo {
   number: number;
@@ -75,6 +77,31 @@ export function parseDependencies(body: string | null): number[] {
     for (const n of m[1].matchAll(/#(\d+)/g)) out.add(Number(n[1]));
   }
   return [...out];
+}
+
+export const OVERLOAD_RETRY_MIN = 60;
+export const OVERLOAD_RETRY_CAP = 3;
+
+/**
+ * Pure: open PRs (not needs-human) whose latest reviewer run (subject `pr:N`) failed with stop_reason
+ * model_overloaded at least OVERLOAD_RETRY_MIN ago, with fewer than OVERLOAD_RETRY_CAP such failures in the
+ * recent window; lowest number first. Factory-PR reviews start only on webhooks, so without this a review cut
+ * short by a busy free tier waits for the next push, check suite or approval.
+ */
+export function overloadedReviews(state: Pick<TickState, "openPRs" | "recentRuns">, now: Date): number[] {
+  const out: number[] = [];
+  for (const p of state.openPRs) {
+    if ((p.labels ?? []).includes("needs-human")) continue;
+    const runs = (state.recentRuns ?? [])
+      .filter((r) => r.agent === "reviewer" && r.subject === `pr:${p.number}`)
+      .sort((a, b) => Date.parse(a.dispatchedAt) - Date.parse(b.dispatchedAt));
+    const last = runs[runs.length - 1];
+    if (!last || last.status !== "failed" || last.stopReason !== "model_overloaded") continue;
+    if (now.getTime() - Date.parse(last.dispatchedAt) < OVERLOAD_RETRY_MIN * 60_000) continue;
+    if (runs.filter((r) => r.stopReason === "model_overloaded").length >= OVERLOAD_RETRY_CAP) continue;
+    out.push(p.number);
+  }
+  return out.sort((a, b) => a - b);
 }
 
 export function isDependabot(author: string): boolean {
@@ -306,6 +333,10 @@ export function planTick(state: TickState, now: Date): Decision[] {
       .reduce((a, b) => Math.max(a, b), 0);
     if (nowMs - last >= 50 * 60_000) dispatch("reviewer", "dependabot", null, Math.min(...dependabotPRs), "review");
   }
+
+  // reviewer: retry a factory-PR review that stopped model_overloaded (webhooks would not re-send it)
+  const overloaded = overloadedReviews(state, now);
+  if (overloaded.length) dispatch("reviewer", `pr:${overloaded[0]}`, null, overloaded[0], "review");
 
   // triage sweep
   if (state.unlabeledIssues.length) {

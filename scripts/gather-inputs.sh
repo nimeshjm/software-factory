@@ -92,7 +92,15 @@ mode_phases() {
       builder|bug-fixer)
         if [ -n "$ISSUE" ] && jq -e 'any(.labels[]; . == "plan:approved")' "$INPUTS_DIR/issue.json" >/dev/null; then
           plan="$(fetch_plan_comment "$ISSUE" || true)"
-          if [ -n "$plan" ]; then
+          if [ -n "$plan" ] && plan_lists_no_files "$plan" \
+            && ! jq -e 'any(.labels[]; . == "spike")' "$INPUTS_DIR/issue.json" >/dev/null; then
+            # An approved plan with no files would only run an implement with nothing to change (#119, #120):
+            # plan again, and drop plan:approved from this run's copy of the labels so the new plan is held for
+            # a fresh approval (apply_plan removes the label from the issue when it holds).
+            jq '.labels |= map(select(. != "plan:approved"))' "$INPUTS_DIR/issue.json" >"$INPUTS_DIR/issue.json.tmp" \
+              && mv "$INPUTS_DIR/issue.json.tmp" "$INPUTS_DIR/issue.json"
+            log "plan:approved but the approved plan lists no files: planning again"
+          elif [ -n "$plan" ]; then
             printf '%s\n' "$plan" | grep -v -e '^<!-- factory:plan' >"$OUT_DIR/plan.md" || true
             phases="implement"
             log "plan:approved with existing plan comment: running implement only"
